@@ -360,6 +360,14 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
     const refNumber = `NF-${String(shipmentId || '').slice(0, 8).toUpperCase()}`;
     const prov = opts?.provenance || opts?.telemetry?.provenance;
 
+    onEntityClick?.({
+      type: 'shipment',
+      id: shipmentId,
+      shipmentId,
+      ref: refNumber,
+      coords: { lat: coords[1], lng: coords[0] },
+    });
+
     // 1. Immediate loading popup
     showPopup(coords, `<div style="${pStyle}border:1px solid ${modeColor}50;min-width:260px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
@@ -2033,9 +2041,32 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
         </div>
       </div>`);
 
+      // Find an active shipment associated with this port if available
+      let associatedShipmentId: string | undefined;
+      if (routesFeaturesRef.current && routesFeaturesRef.current.length > 0) {
+        for (const rf of routesFeaturesRef.current) {
+          const geom = rf.geometry;
+          if (geom?.type === 'LineString' && Array.isArray(geom.coordinates) && geom.coordinates.length > 0) {
+            const start = geom.coordinates[0];
+            const end = geom.coordinates[geom.coordinates.length - 1];
+            if (
+              (Math.abs(start[0] - coords[0]) < 0.8 && Math.abs(start[1] - coords[1]) < 0.8) ||
+              (Math.abs(end[0] - coords[0]) < 0.8 && Math.abs(end[1] - coords[1]) < 0.8)
+            ) {
+              associatedShipmentId = String(rf.properties?.shipment_id);
+              break;
+            }
+          }
+        }
+        if (!associatedShipmentId && routesFeaturesRef.current[0]?.properties?.shipment_id) {
+          associatedShipmentId = String(routesFeaturesRef.current[0].properties.shipment_id);
+        }
+      }
+
       onEntityClick?.({
         type: 'port',
         id: p.port_id || p.id,
+        shipmentId: associatedShipmentId,
         un_locode: unLocode,
         name: p.name,
         congestion_index: cIndex,
@@ -2053,6 +2084,13 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
         const shipmentId = p.shipment_id || p.id;
         const legId = p.leg_id || p.id || '—';
         const mode = p.mode || (layer.includes('truck') ? 'ROAD' : 'SEA');
+        onEntityClick?.({
+          type: 'route',
+          id: legId,
+          shipmentId: String(shipmentId),
+          mode,
+          properties: p,
+        });
         await openShipmentInspector(shipmentId, coords, {
           mode,
           legId,

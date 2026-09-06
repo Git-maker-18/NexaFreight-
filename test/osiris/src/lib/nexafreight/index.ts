@@ -40,6 +40,15 @@ export type {
   FeedHealth,
   FeedHealthOut,
   FeedHealthResponse,
+  RiskBand,
+  MLResponseBase,
+  MLPredictionRequest,
+  DelayPrediction,
+  EtaPrediction,
+  DemandForecastSeriesPoint,
+  DemandForecastResponse,
+  ForecastUnavailable,
+  MLErrorResponse,
 } from './types'
 
 // Errors
@@ -60,6 +69,9 @@ export {
   getPorts,
   getAllRoutes,
   getFeedHealth,
+  getDelayPrediction,
+  getEtaPrediction,
+  getDemandForecast,
   nexaClient,
   type GetShipmentsParams,
 } from './client'

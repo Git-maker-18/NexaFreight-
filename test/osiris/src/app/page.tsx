@@ -26,6 +26,7 @@ import LiveAlerts from '@/components/LiveAlerts';
 import WorldRemote from '@/components/WorldRemote';
 import ArcGISPanel from '@/components/ArcGISPanel';
 import FeedHealthIndicator from '@/components/FeedHealthIndicator';
+import ShipmentInspectorPanel from '@/components/ShipmentInspectorPanel';
 const OsirisMap = dynamic(() => import('@/components/OsirisMap'), { ssr: false });
 const LayerPanel = dynamic(() => import('@/components/LayerPanel'));
 const OsintPanel = dynamic(() => import('@/components/OsintPanel'));
@@ -148,6 +149,7 @@ function DashboardInner() {
   const [spaceWeather, setSpaceWeather] = useState<any>(null);
   const [showLayers, setShowLayers] = useState(true);
   const [showAlerts, setShowAlerts] = useState(false);
+  const [selectedShipmentId, setSelectedShipmentId] = useState<string | null>(null);
   const [showScmPanel, setShowScmPanel] = useState(true);
   const [showIntel, setShowIntel] = useState(false);
   const [showDrawing, setShowDrawing] = useState(false);
@@ -441,10 +443,20 @@ function DashboardInner() {
   }, []);
   // Entity click handler (hoisted from JSX to comply with Rules of Hooks - Fixes #113)
   const handleEntityClick = useCallback((entity: any) => {
-    if (entity?.type === 'live_news' && entity.url) {
+    if (!entity) return;
+    if (entity.type === 'live_news' && entity.url) {
       setLiveFeedUrl(entity.url);
       setLiveFeedName(entity.name);
       setLiveFeedEmbedAllowed(entity.embed_allowed !== false);
+      return;
+    }
+
+    if (entity.type === 'shipment' || entity.type === 'port' || entity.type === 'route') {
+      const id = entity.shipmentId ?? entity.shipment_id ?? entity.id;
+      if (id) {
+        setSelectedShipmentId(String(id));
+      }
+      return;
     }
   }, []);
 
@@ -1698,6 +1710,12 @@ function DashboardInner() {
           />
         </div>
       )}
+
+      {/* ── Shipment Inspector Panel ── */}
+      <ShipmentInspectorPanel
+        shipmentId={selectedShipmentId}
+        onClose={() => setSelectedShipmentId(null)}
+      />
 
       {/* ── OVERLAYS ── */}
       <div className="vignette absolute inset-0 pointer-events-none z-[2]" />

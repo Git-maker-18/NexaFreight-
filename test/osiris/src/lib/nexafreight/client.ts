@@ -31,6 +31,10 @@ import type {
   ShipmentListItem,
   User,
   FeedHealthResponse,
+  MLPredictionRequest,
+  DelayPrediction,
+  EtaPrediction,
+  DemandForecastResponse,
 } from './types'
 
 // ─── Base URL ─────────────────────────────────────────────────────────────────
@@ -319,6 +323,85 @@ export async function getFeedHealth(): Promise<FeedHealthResponse> {
   return apiFetch<FeedHealthResponse>('/api/map/feed-health')
 }
 
+// ─── ML Prediction endpoints ──────────────────────────────────────────────────
+// URL correction: the backend mounts these at /api/predict/* and /api/demand/*,
+// NOT /api/v1/ml/* as originally spec'd. Confirmed via GET /openapi.json:
+//   ['/api/predict/delay', '/api/predict/eta', '/api/demand/forecast']
+
+/**
+ * POST /api/predict/delay
+ *
+ * Runs the LightGBM delay classifier on 14 shipment features.
+ * Returns delay probability [0,1] and risk band LOW/MEDIUM/HIGH.
+ *
+ * Matches backend: src/nexafreight/api/routes/predictions.py :: predict_delay
+ * Request/response schema: src/nexafreight/api/schemas/ml.py
+ */
+export async function getDelayPrediction(
+  features: MLPredictionRequest
+): Promise<DelayPrediction> {
+  return apiFetch<DelayPrediction>('/api/predict/delay', {
+    method: 'POST',
+    body: features,
+  })
+}
+
+/**
+ * POST /api/predict/eta
+ *
+ * Runs the quantile regression ETA model on 14 shipment features.
+ * Returns P10/P50/P85 ETA in days plus confidence interval width (P85−P10).
+ *
+ * Matches backend: src/nexafreight/api/routes/predictions.py :: predict_eta
+ * Request/response schema: src/nexafreight/api/schemas/ml.py
+ */
+export async function getEtaPrediction(
+  features: MLPredictionRequest
+): Promise<EtaPrediction> {
+  return apiFetch<EtaPrediction>('/api/predict/eta', {
+    method: 'POST',
+    body: features,
+  })
+}
+
+/**
+ * GET /api/demand/forecast
+ *
+ * Fetches precomputed Prophet demand forecast for a (category × region) lane.
+ *
+ * Returns:
+ *   - DemandForecastResponse   on success (HTTP 200)
+ *   - null                     when lane is unknown (HTTP 404 UNKNOWN_LANE)
+ *                              → caller should show "no forecast" placeholder,
+ *                                not treat this as an error
+ *   - throws NexaHttpError     for all other failures (503 model down, etc.)
+ *
+ * Matches backend: src/nexafreight/api/routes/predictions.py :: demand_forecast
+ */
+export async function getDemandForecast(
+  category: string,
+  region: string,
+  horizonDays: 30 | 60 | 90 = 90
+): Promise<DemandForecastResponse | null> {
+  try {
+    return await apiFetch<DemandForecastResponse>('/api/demand/forecast', {
+      params: {
+        category,
+        region,
+        horizon_days: horizonDays,
+      },
+    })
+  } catch (err) {
+    // 404 UNKNOWN_LANE is a normal business outcome — the lane simply isn't in
+    // the model. UI should show "no forecast available", not an error state.
+    if (err instanceof NexaHttpError && err.isNotFound) {
+      return null
+    }
+    // Any other error (503 model down, 401 unauth, network failure) — propagate.
+    throw err
+  }
+}
+
 // ─── Convenience namespace export ─────────────────────────────────────────────
 // Allows `import { nexaClient } from '…/client'` as an alternative to
 // importing individual functions.
@@ -335,5 +418,7 @@ export const nexaClient = {
   getPorts,
   getAllRoutes,
   getFeedHealth,
+  getDelayPrediction,
+  getEtaPrediction,
+  getDemandForecast,
 } as const
-

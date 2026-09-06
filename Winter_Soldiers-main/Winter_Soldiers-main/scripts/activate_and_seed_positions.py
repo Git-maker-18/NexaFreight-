@@ -17,7 +17,10 @@ def activate_legs() -> None:
         "WHERE id IN (SELECT id FROM shipments LIMIT 500);"
     )
     cur.execute(
-        "UPDATE legs SET status = 'IN_PROGRESS', actual_departure = datetime('now', '-30 minutes') "
+        "UPDATE legs SET status = 'IN_PROGRESS', "
+        "actual_departure = datetime('now', '-30 minutes'), "
+        "planned_departure = datetime('now', '-30 minutes'), "
+        "planned_arrival = datetime('now', '+6 hours') "
         "WHERE shipment_id IN (SELECT id FROM shipments WHERE status = 'IN_TRANSIT') "
         "AND sequence_number IN (1, 2);"
     )

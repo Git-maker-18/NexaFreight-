@@ -150,7 +150,7 @@ export interface VesselInfo {
  * - "low": SIMULATED or MOCK (synthetic)
  * - "unknown": other / unrecognized
  */
-export type RouteQuality = 'high' | 'medium' | 'low' | 'unknown'
+export type RouteQuality = 'high' | 'medium' | 'low' | 'unknown' | 'PRECISE' | 'APPROXIMATE' | string
 
 /**
  * Generic GeoJSON geometry object.
@@ -207,11 +207,11 @@ export interface LegDetail extends Leg {
  * src/nexafreight/schemas/shipment.py :: OrderSummary
  */
 export interface OrderSummary {
-  id: number
-  order_number: string
+  id: number | string
+  order_number?: string
   sla_deadline: string                 // ISO-8601
-  revenue: number                      // USD
-  sla_status: OrderSlaStatus
+  revenue?: number                     // USD
+  sla_status?: OrderSlaStatus
 }
 
 /** Alias for OrderSummary */
@@ -222,10 +222,13 @@ export type Order = OrderSummary
  * src/nexafreight/schemas/shipment.py :: ShipmentEvent
  */
 export interface ShipmentEvent {
+  id?: string | number
   timestamp: string                    // ISO-8601
-  event_type: string
-  description: string
-  actor: string | null
+  type?: string
+  event_type?: string
+  message?: string
+  description?: string
+  actor?: string | null
 }
 
 /** Alias for ShipmentEvent */
@@ -238,9 +241,13 @@ export type Event = ShipmentEvent
  * Extends ShipmentListItem with route segments (legs), associated orders, and events.
  */
 export interface ShipmentDetail extends ShipmentListItem {
+  reference?: string
+  dest?: string
+  destination: string
   cargo_class?: string
   route_version?: number
   container_count?: number
+  provenance?: string
   legs: Leg[]
   orders: Order[]
   events?: Event[]
@@ -394,4 +401,118 @@ export interface FeedHealthResponse {
   adapters: FeedHealth[]
 }
 
+// ─── ML Predictions ───────────────────────────────────────────────────────────
+// Matches backend: src/nexafreight/api/schemas/ml.py
+// Routes:
+//   POST /api/predict/delay   → DelayPrediction
+//   POST /api/predict/eta     → EtaPrediction
+//   GET  /api/demand/forecast → DemandForecastResponse | ForecastUnavailable
 
+/** Risk band classification from delay probability. */
+export type RiskBand = 'LOW' | 'MEDIUM' | 'HIGH'
+
+/**
+ * Shared fields on every ML prediction response.
+ * src/nexafreight/api/schemas/ml.py :: _MLResponseBase
+ */
+export interface MLResponseBase {
+  model_version: string
+  schema_version: string
+  provenance: 'DERIVED' | string
+  /** Reserved for T-049D OSINT disruption-flag payloads. Always null currently. */
+  context: Record<string, unknown> | null
+}
+
+/**
+ * Request body for POST /api/predict/delay and POST /api/predict/eta.
+ * src/nexafreight/api/schemas/ml.py :: DelayPredictionRequest / EtaPredictionRequest
+ * Both endpoints accept the same 14 features.
+ */
+export interface MLPredictionRequest {
+  shipping_mode: 'AIR' | 'SEA' | 'RAIL' | 'ROAD' | string
+  cargo_class: 'STANDARD' | 'HIGH_VALUE' | 'REFRIGERATED' | string
+  revenue: number
+  shipping_cost: number
+  scheduled_shipping_days: number
+  order_country: string
+  customer_country: string
+  product_price: number
+  order_profit: number
+  sla_month: number         // 1–12
+  sla_weekday: number       // 0–6 (Mon=0)
+  sla_quarter: number       // 1–4
+  total_distance_km: number
+  leg_count: number         // ≥ 1
+}
+
+/**
+ * POST /api/predict/delay — response body.
+ * src/nexafreight/api/schemas/ml.py :: DelayPredictionResponse
+ *
+ * probability in [0, 1]. risk_band: LOW (<0.3) | MEDIUM (<0.6) | HIGH (≥0.6).
+ */
+export interface DelayPrediction extends MLResponseBase {
+  probability: number   // [0.0, 1.0] — delay probability
+  risk_band: RiskBand   // LOW | MEDIUM | HIGH
+}
+
+/**
+ * POST /api/predict/eta — response body.
+ * src/nexafreight/api/schemas/ml.py :: EtaPredictionResponse
+ *
+ * P10 = optimistic, P50 = median, P85 = conservative (all in days from now).
+ * confidence_interval_width = P85 − P10.
+ */
+export interface EtaPrediction extends MLResponseBase {
+  p10_eta_days: number              // Optimistic ETA (days)
+  p50_eta_days: number              // Median ETA (days)
+  p85_eta_days: number              // Conservative ETA (days)
+  confidence_interval_width: number // P85 − P10 spread (days, ≥ 0)
+}
+
+/**
+ * One time-series point in a demand forecast.
+ * src/nexafreight/api/schemas/ml.py :: DemandForecastSeriesPoint
+ */
+export interface DemandForecastSeriesPoint {
+  ds: string                // ISO date string (e.g. "2024-07-15")
+  yhat: number              // Point forecast
+  yhat_lower: number | null // Lower bound (may be null)
+  yhat_upper: number | null // Upper bound (may be null)
+  is_forecast: boolean      // true = projected, false = historical
+}
+
+/**
+ * GET /api/demand/forecast — successful response.
+ * src/nexafreight/api/schemas/ml.py :: DemandForecastResponse
+ *
+ * Query params: ?category=<str>&region=<str>&horizon_days=30|60|90
+ */
+export interface DemandForecastResponse extends MLResponseBase {
+  category: string
+  region: string
+  series: DemandForecastSeriesPoint[]
+  horizon_snapshot: string  // e.g. "90 days"
+}
+
+/**
+ * GET /api/demand/forecast — 404 when (category × region) lane is unknown.
+ * src/nexafreight/api/routes/predictions.py :: demand_forecast (404 branch)
+ */
+export interface ForecastUnavailable {
+  detail: {
+    error_code: 'UNKNOWN_LANE'
+    message: string
+    provenance: 'SYSTEM'
+  }
+}
+
+/**
+ * Standard error envelope for ML endpoints (503 service unavailable).
+ * src/nexafreight/api/schemas/ml.py :: MLErrorResponse
+ */
+export interface MLErrorResponse {
+  error_code: string
+  message: string
+  provenance: string
+}
