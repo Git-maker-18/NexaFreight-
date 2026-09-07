@@ -41,7 +41,9 @@ Thumbs.db
 .git_osiris_backup/
 **/.git_osiris_backup/
 
-# Large raw datasets (> 100MB blocked by GitHub)
-Datasets/IMF Daily Port Activity/*.csv
+# Phase R additions
+Datasets/
+backend/scratch_*.txt
+archive/scratch_*.txt
 **/Daily_Port_Activity_Data_and_Trade_Estimates.csv
 **/data/raw/port_activity/*.csv
