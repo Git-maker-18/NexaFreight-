@@ -26,7 +26,7 @@ const RISK_COLORS: Record<string, string> = {
 export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsProps) {
   const [expanded, setExpanded] = useState(true);
   const [maximized, setMaximized] = useState(false);
-  const [filter, setFilter] = useState<'all' | 'news' | 'quakes' | 'feeds'>('all');
+  const [filter, setFilter] = useState<'all' | 'news' | 'feeds'>('all');
 
   // Built-in live feeds — verified video IDs (synced with /api/live-news)
   const BUILTIN_FEEDS = [
@@ -76,17 +76,6 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
     });
   }
 
-  // Earthquakes
-  if (data.earthquakes) {
-    data.earthquakes.slice(0, 5).forEach((eq: any) => {
-      alerts.push({
-        type: 'quake', title: `M${eq.magnitude} - ${eq.place}`, source: 'USGS',
-        lat: eq.lat, lng: eq.lng, time: eq.time,
-        severity: eq.magnitude >= 6 ? 'CRITICAL' : eq.magnitude >= 4.5 ? 'HIGH' : 'MODERATE',
-      });
-    });
-  }
-
   // Built-in live feeds (always present)
   BUILTIN_FEEDS.forEach(f => {
     alerts.push({
@@ -99,13 +88,11 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
 
   const filtered = filter === 'all' ? alerts.filter(a => a.type !== 'feed') :
     filter === 'news' ? alerts.filter(a => a.type === 'news') :
-    filter === 'quakes' ? alerts.filter(a => a.type === 'quake') :
     alerts.filter(a => a.type === 'feed');
 
   const getIcon = (type: string) => {
     switch (type) {
       case 'news': return Newspaper;
-      case 'quake': return AlertTriangle;
       case 'feed': return Radio;
       default: return Newspaper;
     }
@@ -132,7 +119,7 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
         <div className="flex items-center gap-2">
           <Radio className="w-3.5 h-3.5 text-[#FF4081]" />
           <span className="hud-text text-[11px] text-[var(--text-primary)]">LIVE ALERTS</span>
-          <span className="gotham-tag gotham-tag--high" style={{ fontSize: '9px', padding: '1px 5px' }}>{alerts.filter(a => a.type === 'news' || a.type === 'quake').length}</span>
+          <span className="gotham-tag gotham-tag--high" style={{ fontSize: '9px', padding: '1px 5px' }}>{alerts.filter(a => a.type === 'news').length}</span>
           <span className="gotham-tag gotham-tag--info" style={{ fontSize: '9px', padding: '1px 4px' }}>{BUILTIN_FEEDS.length} FEEDS</span>
         </div>
         <div className="flex items-center gap-2">
@@ -155,7 +142,7 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
           >
             {/* Filters - Fixed Height, Never Shrinks */}
             <div className={`flex-shrink-0 flex gap-1 ${maximized ? 'px-6 py-4 border-b border-[#2A2A28] bg-[#111111]' : 'px-3 py-2 border-b border-[rgba(255,255,255,0.05)]'}`}>
-              {(['all', 'news', 'quakes', 'feeds'] as const).map(f => (
+              {(['all', 'news', 'feeds'] as const).map(f => (
                 <button
                   key={f}
                   onClick={() => setFilter(f)}

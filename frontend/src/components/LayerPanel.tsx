@@ -3,9 +3,9 @@
 import { memo, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Plane, Satellite, Sun, AlertTriangle, Camera,
+  Plane, Sun, AlertTriangle,
   CloudLightning, Ship, Network, Database, Ghost,
-  Flame, Tv, Radio, Mountain, Anchor, Megaphone, SlidersHorizontal
+  Tv, Radio, Mountain, Anchor, Megaphone, SlidersHorizontal
 } from 'lucide-react';
 import StyleStudio from './StyleStudio';
 
@@ -78,26 +78,12 @@ const LAYER_GROUPS: LayerGroupDef[] = [
       { key: 'maritime', label: 'Maritime / Naval', dataKey: 'maritime_ships,maritime_ports,maritime_chokepoints' },
     ],
   },
+  // Space/Cameras/Seismic/Thermal layers removed - no data source yet, returning in Phase 5
   {
-    label: 'SPACE',
-    fullLabel: 'SPACE TRACKING',
-    icon: Satellite,
+    label: 'NEWS',
+    fullLabel: 'LIVE NEWS FEEDS',
+    icon: Tv,
     layers: [
-      { key: 'satellites', label: 'All Satellites', dataKey: 'satellites' },
-      { key: 'sat_comms', label: 'Starlink / Comms', dataKey: 'satellites', catKey: 'comms' },
-      { key: 'sat_military', label: 'Military / Intel', dataKey: 'satellites', catKey: 'military' },
-      { key: 'sat_navigation', label: 'GPS / Navigation', dataKey: 'satellites', catKey: 'navigation' },
-      { key: 'sat_earth', label: 'Earth Observation', dataKey: 'satellites', catKey: 'earth_obs' },
-      { key: 'sat_science', label: 'Stations / Telescopes', dataKey: 'satellites', catKey: 'science' },
-    ],
-  },
-  {
-    label: 'SURVEIL',
-    fullLabel: 'SURVEILLANCE',
-    icon: Camera,
-    layers: [
-      { key: 'cctv', label: 'CCTV Cameras', dataKey: 'cameras' },
-      { key: 'cctv_previews', label: 'Live Previews', dataKey: '', parent: 'cctv' },
       { key: 'live_news', label: 'Live News Feeds', dataKey: 'live_feeds' },
     ],
   },
@@ -106,8 +92,6 @@ const LAYER_GROUPS: LayerGroupDef[] = [
     fullLabel: 'NATURAL HAZARDS',
     icon: CloudLightning,
     layers: [
-      { key: 'earthquakes', label: 'Earthquakes', dataKey: 'earthquakes' },
-      { key: 'fires', label: 'Active Fires', dataKey: 'fires' },
       { key: 'weather', label: 'Severe Weather', dataKey: 'weather_events' },
     ],
   },
@@ -427,8 +411,7 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
                       <span className="text-[10px] font-mono tracking-[0.2em] uppercase text-white/35 flex-1">
                         {group.fullLabel}
                       </span>
-                      {/* Switching eight satellite layers one at a time is the
-                          kind of thing that makes a panel feel unfinished. */}
+                      {/* Batch toggle all layers in group */}
                       <button
                         onClick={(e) => { e.stopPropagation(); toggleGroup(group.layers); }}
                         className="px-1.5 py-0.5 rounded text-[10px] font-mono tracking-wider text-white/40 hover:text-white hover:bg-white/10 transition-colors"
