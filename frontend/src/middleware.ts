@@ -21,7 +21,8 @@ export function middleware(request: NextRequest, event: NextFetchEvent) {
     const pageView = fetch('http://umami-umami-1:3000/api/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'User-Agent': userAgent, 'x-forwarded-for': ip },
-      body: JSON.stringify({ payload: basePayload, type: "event" })
+      body: JSON.stringify({ payload: basePayload, type: "event" }),
+      signal: AbortSignal.timeout(1000)
     }).catch(() => {});
 
     const ipEvent = fetch('http://umami-umami-1:3000/api/send', {
@@ -30,7 +31,8 @@ export function middleware(request: NextRequest, event: NextFetchEvent) {
       body: JSON.stringify({
         payload: { ...basePayload, name: "Network Log", data: { IP: ip } },
         type: "event"
-      })
+      }),
+      signal: AbortSignal.timeout(1000)
     }).catch(() => {});
 
     event.waitUntil(Promise.all([pageView, ipEvent]));
