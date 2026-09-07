@@ -17,22 +17,24 @@ export function middleware(request: NextRequest, event: NextFetchEvent) {
     website: process.env.UMAMI_WEBSITE_ID || "cd8f216c-fc3f-45f5-ba1a-e10309a61d18"
   };
 
-  const pageView = fetch('http://umami-umami-1:3000/api/send', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'User-Agent': userAgent, 'x-forwarded-for': ip },
-    body: JSON.stringify({ payload: basePayload, type: "event" })
-  }).catch(() => {});
+  if (process.env.ENABLE_UMAMI === 'true') {
+    const pageView = fetch('http://umami-umami-1:3000/api/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'User-Agent': userAgent, 'x-forwarded-for': ip },
+      body: JSON.stringify({ payload: basePayload, type: "event" })
+    }).catch(() => {});
 
-  const ipEvent = fetch('http://umami-umami-1:3000/api/send', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'User-Agent': userAgent, 'x-forwarded-for': ip },
-    body: JSON.stringify({
-      payload: { ...basePayload, name: "Network Log", data: { IP: ip } },
-      type: "event"
-    })
-  }).catch(() => {});
+    const ipEvent = fetch('http://umami-umami-1:3000/api/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'User-Agent': userAgent, 'x-forwarded-for': ip },
+      body: JSON.stringify({
+        payload: { ...basePayload, name: "Network Log", data: { IP: ip } },
+        type: "event"
+      })
+    }).catch(() => {});
 
-  event.waitUntil(Promise.all([pageView, ipEvent]));
+    event.waitUntil(Promise.all([pageView, ipEvent]));
+  }
 
   return NextResponse.next();
 }
