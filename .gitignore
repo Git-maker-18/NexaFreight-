@@ -47,3 +47,6 @@ backend/scratch_*.txt
 archive/scratch_*.txt
 **/Daily_Port_Activity_Data_and_Trade_Estimates.csv
 **/data/raw/port_activity/*.csv
+
+data/
+*.db
