@@ -67,6 +67,12 @@ to shared storage / release asset)*.
 ## Tests
 
 ```bash
+# Using Makefile (repo root)
+make test      # runs pytest and vitest
+make pytest    # backend tests only
+make vitest    # frontend tsc & vitest
+
+# Or run directly:
 # Backend
 cd backend && pytest -q
 
