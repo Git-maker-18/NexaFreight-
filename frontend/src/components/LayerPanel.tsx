@@ -7,7 +7,7 @@ import {
   CloudLightning, Ship, Network, Database, Ghost,
   Tv, Radio, Mountain, Anchor, Megaphone, SlidersHorizontal
 } from 'lucide-react';
-import StyleStudio from './StyleStudio';
+// StyleStudio removed (archived — not core logistics)
 
 interface LayerPanelProps {
   data: any;
@@ -288,9 +288,7 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
             <SlidersHorizontal className="w-4 h-4" style={{ color: studioOpen ? 'var(--gold-primary)' : 'rgba(255,255,255,0.25)' }} />
           </button>
         </div>
-        <AnimatePresence>
-          {studioOpen && <StyleStudio isMobile onClose={() => setStudioOpen(false)} />}
-        </AnimatePresence>
+          {/* StyleStudio removed */}
 
         {/* MOBILE GHOST TOGGLE */}
         {setTheme && (
@@ -485,9 +483,7 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
           }}
         />
       </button>
-      <AnimatePresence>
-        {studioOpen && <StyleStudio onClose={() => setStudioOpen(false)} />}
-      </AnimatePresence>
+      {/* StyleStudio removed */}
 
       {/* Ghost Protocol Toggle */}
       {setTheme && (
