@@ -1198,7 +1198,7 @@ function DashboardInner() {
                 <div className="px-3 pb-3">
                   <div className="flex items-center justify-between mb-2">
                     <span className="hud-text text-[10px] text-[var(--text-primary)]">
-                      {mobilePanel === 'layers' ? 'LAYERS & STATS' : 'SEARCH'}
+                      {mobilePanel === 'layers' ? 'LAYERS & STATS' : mobilePanel === 'intel' ? 'INTEL FEED' : mobilePanel === 'recon' ? 'NEXA RECON' : mobilePanel === 'remote' ? 'WORLD REMOTE' : 'SEARCH'}
                     </span>
                     <button onClick={() => setMobilePanel(null)} className="text-[var(--text-muted)] p-1"><X className="w-4 h-4" /></button>
                   </div>
@@ -1212,12 +1212,34 @@ function DashboardInner() {
                         </div>
                       </div>
                       <LayerPanel data={data} activeLayers={activeLayers} setActiveLayers={setActiveLayers} isMobile={true} theme={globeTheme} setTheme={setGlobeTheme} capabilities={capabilities} />
+                      <div className="mt-8">
+                        <ViewPresets onNavigate={(lat, lng, zoom) => { setFlyToLocation({ lat, lng, ts: Date.now() }); setMapView(v => ({ ...v, zoom })); setMobilePanel(null); }} />
+                      </div>
                     </>
                   )}
+                  {mobilePanel === 'intel' && <IntelFeed data={data} onLocate={(lat, lng) => { setFlyToLocation({ lat, lng, ts: Date.now() }); setMobilePanel(null); }} />}
                   {mobilePanel === 'search' && (
                     <div className="space-y-2">
                       <SearchBar onLocate={(lat, lng, zoom) => { setFlyToLocation({ lat, lng, zoom, ts: Date.now() }); setMobilePanel(null); }} />
+                      <SharePanel mapView={mapView} activeLayers={activeLayers} mouseCoords={null} />
                     </div>
+                  )}
+                  {mobilePanel === 'recon' && (
+                    <div className="space-y-2">
+                      {/* Requires external scanner backend (T-079) - shown as unavailable in standalone mode */}
+                      <OsintPanel isOpen={true} onClose={() => setMobilePanel(null)} isMobile={true} onSweepVisualize={setSweepData} />
+                    </div>
+                  )}
+                  {mobilePanel === 'remote' && (
+                    <WorldRemote onClose={() => setMobilePanel(null)} onPlaceOnMap={(devs) => {
+                      setScanTargets(prev => {
+                        const ids = new Set(prev.map((t: any) => t.id));
+                        const next = [...prev];
+                        devs.forEach(d => { if (!ids.has(d.id)) next.unshift({ id: d.id, name: d.name, lat: d.lat, lng: d.lng, type: d.type, color: d.color, timestamp: Date.now(), source: 'BLE' }); });
+                        return next.slice(0, 20);
+                      });
+                      if (devs.length > 0) setFlyToLocation({ lat: devs[0].lat, lng: devs[0].lng, ts: Date.now() });
+                    }} />
                   )}
                 </div>
               </motion.div>
@@ -1280,6 +1302,40 @@ function DashboardInner() {
             )}
           </div>
         </motion.div>
+      )}
+
+      {/* ── Entity Graph Panel ── */}
+      {/* Guidance belongs over the map, where the clicking happens. */}
+      {drawMode && (
+        <DrawHud
+          mode={drawMode}
+          progress={drawProgress}
+          onUndo={() => sendDraw('undo')}
+          onFinish={() => sendDraw('finish')}
+          onCancel={() => { sendDraw('cancel'); setDrawMode(null); setDrawProgress(null); }}
+        />
+      )}
+
+      {showDrawing && (
+        <div className="absolute right-12 top-1/2 -translate-y-1/2 z-[400] w-80 pointer-events-auto">
+          <DrawingToolbar
+            drawMode={drawMode}
+            onSetDrawMode={setDrawMode}
+            progress={drawProgress}
+            polygons={drawnPolygons}
+            onDeletePolygon={(id) => setDrawnPolygons(p => p.filter(x => x.id !== id))}
+            onClearAll={() => { setDrawnPolygons([]); setSelectedPolygon(null); }}
+            onExportGeoJSON={handleExportGeoJSON}
+            selectedPolygon={selectedPolygon}
+            onSelectPolygon={setSelectedPolygon}
+            onRenamePolygon={(id, name) => setDrawnPolygons(p => p.map(x => x.id === id ? { ...x, name } : x))}
+            data={data}
+            onLocateEntity={(lat, lng) => setFlyToLocation({ lat, lng, zoom: 12, ts: Date.now() })}
+            watched={watched}
+            onToggleWatch={toggleWatch}
+            watchEvents={watchEvents}
+          />
+        </div>
       )}
 
       {/* ── Shipment Inspector Panel ── */}
