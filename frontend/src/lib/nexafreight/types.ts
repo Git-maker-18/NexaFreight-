@@ -335,6 +335,19 @@ export type PortFeature = GeoJSON.Feature<GeoJSON.Point, PortFeatureProperties>
  */
 export type PortFeatureCollection = GeoJSON.FeatureCollection<GeoJSON.Point, PortFeatureProperties>
 
+/**
+ * Properties for a warehouse GeoJSON Point feature.
+ */
+export interface WarehouseFeatureProperties {
+  warehouse_id: string
+  name: string
+}
+
+/**
+ * GeoJSON FeatureCollection for warehouse markers.
+ */
+export type WarehouseFeatureCollection = GeoJSON.FeatureCollection<GeoJSON.Point, WarehouseFeatureProperties>
+
 // ─── Live Positions & Telemetry ───────────────────────────────────────────────
 
 /**
@@ -515,4 +528,311 @@ export interface MLErrorResponse {
   error_code: string
   message: string
   provenance: string
+}
+
+// ─── Operational APIs (Definitive Plan — Phase 10-12) ────────────────────────
+// Backend schemas: src/nexafreight/schemas/ops.py
+// Endpoints: /api/alerts /api/disruptions /api/decisions /api/analytics /api/copilot
+
+/** src/nexafreight/enums.py :: AlertSeverity */
+export type AlertSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
+
+/** src/nexafreight/enums.py :: AlertStatus */
+export type AlertStatus = 'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED'
+
+/** src/nexafreight/enums.py :: DisruptionType */
+export type DisruptionType =
+  | 'VESSEL_DELAY'
+  | 'PORT_CONGESTION'
+  | 'WEATHER'
+  | 'MANUAL'
+
+/** src/nexafreight/enums.py :: DisruptionStatus */
+export type DisruptionStatus = 'ACTIVE' | 'RESOLVED'
+
+/** src/nexafreight/enums.py :: DecisionAction */
+export type DecisionAction = 'ACCEPT_DELAY' | 'REROUTE' | 'SPLIT_SHIPMENT'
+
+/**
+ * One row of GET /api/disruptions.
+ * src/nexafreight/schemas/ops.py :: DisruptionOut
+ */
+export interface Disruption {
+  id: string
+  shipment_id: string
+  leg_id?: number | null
+  disruption_type: DisruptionType
+  status: DisruptionStatus
+  description?: string | null
+  detected_at?: string | null            // ISO-8601
+  resolved_at?: string | null            // ISO-8601
+}
+
+/** src/nexafreight/schemas/ops.py :: DisruptionsResponse */
+export interface DisruptionsResponse {
+  disruptions: Disruption[]
+}
+
+/** src/nexafreight/schemas/ops.py :: DisruptionCreate */
+export interface DisruptionCreate {
+  shipment_id: string
+  disruption_type: DisruptionType
+  delay_hours?: number | null
+  description?: string | null
+}
+
+/**
+ * One row of GET /api/alerts.
+ * src/nexafreight/schemas/ops.py :: AlertOut
+ */
+export interface Alert {
+  id: string
+  shipment_id: string
+  disruption_id?: string | null
+  disruption_type?: DisruptionType | null
+  severity: AlertSeverity
+  status: AlertStatus
+  financial_exposure: number             // USD
+  created_at?: string | null             // ISO-8601
+  acknowledged_by?: string | null
+  provenance: Provenance | string        // always present (contract rule)
+  source?: string | null
+}
+
+/** src/nexafreight/schemas/ops.py :: AlertsResponse */
+export interface AlertsResponse {
+  alerts: Alert[]
+}
+
+/** src/nexafreight/schemas/ops.py :: SlaBreachOut */
+export interface SlaBreach {
+  order_id?: number | null
+  order_number?: string | null
+  revenue_usd: number
+  days_late: number
+  penalty_usd: number
+  sla_deadline?: string | null
+}
+
+/**
+ * GET /api/alerts/{id} — detail with embedded disruption.
+ * src/nexafreight/schemas/ops.py :: AlertDetail
+ */
+export interface AlertDetail extends Alert {
+  disruption?: Disruption | null
+  sla_breach_details?: SlaBreach[] | null
+  description?: string | null
+  detected_at?: string | null
+}
+
+/** src/nexafreight/schemas/ops.py :: AcknowledgeRequest */
+export interface AcknowledgeRequest {
+  user_id: number                        // operator id to attest (1 = demo operator)
+}
+
+/**
+ * One scored reroute option.
+ * src/nexafreight/schemas/ops.py :: RerouteOptionOut
+ */
+export interface RerouteOption {
+  option_key: string                     // ACCEPT_DELAY | VIA_PIRAEUS | DIVERT_GENERIC | MODAL_SHIFT_AIR
+  action: DecisionAction
+  display_name: string
+  description: string
+  revised_eta?: string | null            // ISO-8601
+  cost_delta_usd: number                 // freight premium (0 when accepting)
+  sla_penalty_usd: number                // SLA penalties avoided/charged at revised ETA
+  demurrage_usd: number                  // projected demurrage exposure
+  carbon_cost_usd: number                // $0.08/kg × ΔCO2
+  co2_delta_kg: number                   // CO2 change vs current route
+  sla_breaches: number                   // breaching orders at revised ETA
+  total_impact_usd: number               // composite cost
+  recommended: boolean                   // exactly one option is recommended
+  assumptions: string[]                  // factor table (transparency)
+}
+
+/** src/nexafreight/schemas/ops.py :: OptionsOut */
+export interface RerouteOptionsResponse {
+  options: RerouteOption[]
+}
+
+/**
+ * POST /api/alerts/{id}/approve — 201 response body.
+ * Backed by schemas in routes/alerts.py (inline dict).
+ */
+export interface ApproveResponse {
+  decision_id: string
+  action: DecisionAction
+  chosen_option_key: string
+  provenance: Provenance | string
+}
+
+/** src/nexafreight/schemas/ops.py :: DecisionOut */
+export interface Decision {
+  id: string
+  alert_id?: string | null
+  shipment_id?: string | null
+  action: DecisionAction
+  chosen_option_key: string
+  financial_impact: number               // USD
+  route_version_before?: number | null
+  route_version_after?: number | null
+  approved_by?: string | null
+  approved_at?: string | null            // ISO-8601
+  provenance: Provenance | string
+}
+
+/** src/nexafreight/schemas/ops.py :: DecisionsResponse */
+export interface DecisionsResponse {
+  decisions: Decision[]
+}
+
+/** src/nexafreight/schemas/ops.py :: ShipmentSummaryOut */
+export interface ShipmentSummary {
+  id: string
+  status: ShipmentStatus
+  mode: TransportMode
+  origin?: string | null
+  destination?: string | null
+}
+
+/** src/nexafreight/schemas/ops.py :: AnalyticsSummaryResponse */
+export interface AnalyticsSummaryResponse {
+  total_shipments: number
+  in_transit: number
+  delivered: number
+  delayed: number
+  sla_breach_count: number
+  open_alerts: number
+  summary_by_status: Record<string, number>
+  shipments: ShipmentSummary[]
+  provenance: Provenance | string
+}
+
+/** src/nexafreight/schemas/ops.py :: WindowSliceOut */
+export interface WindowSlice {
+  period: 'day' | 'week' | 'month'
+  shipments: number
+  total_revenue: number
+  total_shipping_cost: number
+  decided_margin: number
+  undecided_revenue: number
+  undecided_pending_sla_est: number
+  undecided_pending_demurrage_est: number
+  undecided_total_pending_est: number
+}
+
+/** src/nexafreight/schemas/ops.py :: AnalyticsFinancialRow */
+export interface AnalyticsFinancialRow {
+  shipment_id: string
+  mode: TransportMode
+  status: ShipmentStatus
+  revenue_usd: number
+  shipping_cost_usd: number
+  sla_penalty_usd: number
+  demurrage_usd: number
+  freight_cost_usd: number
+  carbon_cost_usd: number
+  total_costs_usd: number
+  margin_usd: number
+  margin_pct: number | null
+}
+
+/** src/nexafreight/schemas/ops.py :: AnalyticsFinancialResponse */
+export interface AnalyticsFinancialResponse {
+  day: WindowSlice
+  week: WindowSlice
+  month: WindowSlice
+  rows: AnalyticsFinancialRow[]
+  provenance: Provenance | string
+}
+
+/** src/nexafreight/schemas/ops.py :: AnalyticsSlaRow */
+export interface SlaRow {
+  shipment_id: string
+  sla_status: OrderSlaStatus
+  days_to_deadline: number | null
+  disrupted: boolean
+  disruption_description?: string | null
+  delay_days: number | null
+}
+
+/** src/nexafreight/schemas/ops.py :: AnalyticsSlaResponse */
+export interface AnalyticsSlaResponse {
+  rows: SlaRow[]
+  provenance: Provenance | string
+}
+
+/** src/nexafreight/schemas/ops.py :: AnalyticsEsgRow */
+export interface EsgRow {
+  shipment_id: string
+  mode: TransportMode
+  kg_co2: number
+  kg_co2e_per_container: number
+  vs_air_co2_saving_pct: number | null
+  vs_air_freight_delta_pct: number | null
+}
+
+/** src/nexafreight/schemas/ops.py :: AnalyticsEsgResponse */
+export interface AnalyticsEsgResponse {
+  rows: EsgRow[]
+  route_breakdown: Record<string, number>
+  provenance: Provenance | string
+}
+
+/**
+ * GET /api/shipments/{id}/predict → 200.
+ * src/nexafreight/schemas/ops.py :: ShipmentPredictResponse
+ */
+export interface ShipmentPredictResponse {
+  shipment_id: string
+  delay_p50_hours: number                // clamped at ≥ 0
+  sla_risk_level: 'ON_TIME' | 'LOW' | 'MEDIUM' | 'HIGH' | 'BREACH' | string
+  model_version?: string | null
+  provenance: 'DERIVED' | 'FALLBACK' | Provenance | string
+}
+
+/** src/nexafreight/schemas/ops.py :: FinancialOrderOut */
+export interface FinancialOrder {
+  order_number: string
+  revenue: number
+  shipping_cost: number
+  sla_status: OrderSlaStatus
+}
+
+/** src/nexafreight/schemas/ops.py :: PnlSnapshotOut */
+export interface PnlSnapshot {
+  revenue_usd: number
+  shipping_cost_usd: number
+  sla_penalty_usd: number
+  demurrage_usd: number
+  freight_cost_usd: number
+  carbon_cost_usd: number
+  total_costs_usd: number
+  margin_usd: number
+  margin_pct: number | null
+  warnings: string[]
+}
+
+/**
+ * GET /api/shipments/{id}/financials → 200 (403 for VIEWER role).
+ * src/nexafreight/schemas/ops.py :: ShipmentFinancialsResponse
+ */
+export interface ShipmentFinancialsResponse {
+  shipment_id: string
+  container_count: number
+  container_weight_t: number             // 14 t/container per the finance model
+  orders: FinancialOrder[]
+  pnl: PnlSnapshot
+  provenance: Provenance | string
+}
+
+/**
+ * POST /api/copilot/ask → 200.
+ * src/nexafreight/schemas/ops.py :: CopilotAskResponse
+ */
+export interface CopilotAskResponse {
+  answer: string
+  source: 'llm' | 'rules' | 'rules_fallback'
+  provenance: Provenance | string
 }

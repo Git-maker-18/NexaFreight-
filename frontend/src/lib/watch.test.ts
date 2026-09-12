@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { diffSweep, appendEvents, formatAgo, MAX_EVENTS, type WatchBaseline } from './watch';
-import type { AoiReport } from './aoi';
+import type { AoiReport } from './watch';
 
 /** Build a sweep result holding the given callsigns in one layer. */
 const report = (labels: string[], layer = 'military_flights'): AoiReport => ({

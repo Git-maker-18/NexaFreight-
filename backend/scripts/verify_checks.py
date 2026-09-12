@@ -31,16 +31,29 @@ except urllib.error.HTTPError as e:
 
 # 3. Successful login
 print('\n[Check 2] Valid login with seeded credentials:')
-req = urllib.request.Request(
-    base_url + '/api/auth/login',
-    data=json.dumps({'email': 'operator@nexafreight.dev', 'password': 'changeme123'}).encode('utf-8'),
-    headers={'Content-Type': 'application/json'}
-)
-resp = urllib.request.urlopen(req)
-login_data = json.loads(resp.read().decode('utf-8'))
-token = login_data['access_token']
-tok_type = login_data.get('token_type', '')
-print('  PASS: HTTP 200 OK | Token type: ' + tok_type + ' | Token prefix: ' + token[:20] + '...')
+login_creds = [
+    {'email': 'operator@nexafreight.local', 'password': 'operator123'},
+    {'email': 'operator@nexafreight.dev', 'password': 'changeme123'},
+]
+token = None
+for cred in login_creds:
+    try:
+        req = urllib.request.Request(
+            base_url + '/api/auth/login',
+            data=json.dumps(cred).encode('utf-8'),
+            headers={'Content-Type': 'application/json'}
+        )
+        resp = urllib.request.urlopen(req)
+        login_data = json.loads(resp.read().decode('utf-8'))
+        token = login_data['access_token']
+        tok_type = login_data.get('token_type', '')
+        print('  PASS: Logged in as ' + cred['email'] + ' | HTTP 200 OK | Token type: ' + tok_type + ' | Token prefix: ' + token[:20] + '...')
+        break
+    except urllib.error.HTTPError:
+        continue
+
+if not token:
+    raise RuntimeError('Could not log in with any seeded credentials. Please run python scripts/seed_user.py')
 
 # 4. Token attached & Current user
 print('\n[Check 5 & 6] Current user endpoint with Bearer token:')

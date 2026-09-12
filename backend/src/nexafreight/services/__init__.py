@@ -1,4 +1,6 @@
 """Services layer containing business logic engines.
 
-Stubs for reroute_engine.py and financial_engine.py will be implemented here.
+Definitive Plan: consolidation, route planning, financial engine,
+disruption detection, alert engine, SLA checker, reroute engine,
+decision executor, and the AI copilot.
 """

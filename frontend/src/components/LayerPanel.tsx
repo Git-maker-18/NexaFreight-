@@ -53,21 +53,10 @@ const LAYER_GROUPS: LayerGroupDef[] = [
   },
   {
     label: 'SDK',
-    fullLabel: 'OSIRIS SDK',
+    fullLabel: 'NexaFreight SDK',
     icon: Network,
     layers: [
       { key: 'sdk_sea', label: 'Maritime Lines', dataKey: 'sdk_entities' },
-    ],
-  },
-  {
-    label: 'AVIATION',
-    fullLabel: 'AVIATION',
-    icon: Plane,
-    layers: [
-      { key: 'flights', label: 'Commercial', dataKey: 'commercial_flights' },
-      { key: 'private', label: 'Private', dataKey: 'private_flights' },
-      { key: 'jets', label: 'Private Jets', dataKey: 'private_jets' },
-      { key: 'military', label: 'Military', dataKey: 'military_flights' },
     ],
   },
   {
@@ -77,61 +66,7 @@ const LAYER_GROUPS: LayerGroupDef[] = [
     layers: [
       { key: 'maritime', label: 'Maritime / Naval', dataKey: 'maritime_ships,maritime_ports,maritime_chokepoints' },
     ],
-  },
-  // Space/Cameras/Seismic/Thermal layers removed - no data source yet, returning in Phase 5
-  {
-    label: 'NEWS',
-    fullLabel: 'LIVE NEWS FEEDS',
-    icon: Tv,
-    layers: [
-      { key: 'live_news', label: 'Live News Feeds', dataKey: 'live_feeds' },
-    ],
-  },
-  {
-    label: 'HAZARD',
-    fullLabel: 'NATURAL HAZARDS',
-    icon: CloudLightning,
-    layers: [
-      { key: 'weather', label: 'Severe Weather', dataKey: 'weather_events' },
-    ],
-  },
-  {
-    label: 'THREAT',
-    fullLabel: 'THREATS & INTEL',
-    icon: AlertTriangle,
-    layers: [
-      { key: 'infrastructure', label: 'Nuclear Facilities', dataKey: 'infrastructure' },
-      { key: 'global_incidents', label: 'Global Incidents', dataKey: 'gdelt' },
-      { key: 'gdelt_events', label: 'GDELT Events', dataKey: 'gdelt_events' },
-    ],
-  },
-  {
-    label: 'NETWORK',
-    fullLabel: 'NETWORK INTEL',
-    icon: Network,
-    layers: [
-      { key: 'malware', label: 'Live Malware', dataKey: 'malware_threats' },
-      { key: 'cyber_attacks', label: 'Live Attacks', dataKey: 'cyber_attacks' },
-    ],
-  },
-  {
-    label: 'NETINTEL',
-    fullLabel: 'NET & EVENT INTEL',
-    icon: Megaphone,
-    layers: [
-      { key: 'cf_outages', label: 'Internet Outages', dataKey: 'cf_outages', requires: 'cloudflare' },
-      { key: 'cf_attacks', label: 'Attack Origins', dataKey: 'cf_attack_origins', requires: 'cloudflare' },
-    ],
-  },
-  {
-    label: 'DISPLAY',
-    fullLabel: 'DISPLAY',
-    icon: Sun,
-    layers: [
-      { key: 'day_night', label: 'Day / Night Cycle', dataKey: '' },
-      { key: 'terrain_3d', label: '3D Terrain & Buildings', dataKey: '' },
-    ],
-  },
+  }
 ];
 
 /* ── Minimal Toggle Switch ── */

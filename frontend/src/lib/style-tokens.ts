@@ -15,16 +15,9 @@
  * and rewrite every backdrop blur to a single value.
  */
 
-import {
-  MAP_DEFAULTS,
-  MAP_PALETTE_KEYS,
-  MAP_VARS,
-  readMapPalette,
-  type MapPalette,
-} from './map-palette';
 
-const STORAGE_KEY = 'osiris:style-studio';
-const STYLE_TAG_ID = 'osiris-style-studio';
+const STORAGE_KEY = 'NexaFreight:style-studio';
+const STYLE_TAG_ID = 'NexaFreight-style-studio';
 
 export interface StyleSettings {
   accent: string;
@@ -54,8 +47,6 @@ export interface StyleSettings {
   scanlines: number;
   vignette: number;
   grain: number;
-  /** Colours the map itself draws with — see ./map-palette. */
-  map: MapPalette;
 }
 
 export const FONT_UI = [
@@ -100,7 +91,6 @@ export const DEFAULTS: StyleSettings = {
   scanlines: 0,
   vignette: 0,
   grain: 0,
-  map: MAP_DEFAULTS,
 };
 
 export type Preset = { label: string; patch: Partial<StyleSettings> };
@@ -202,17 +192,9 @@ export function sanitize(input: unknown, base: StyleSettings): StyleSettings {
     scanlines: normNum(o.scanlines, base.scanlines, 0, 0.2),
     vignette: normNum(o.vignette, base.vignette, 0, 1),
     grain: normNum(o.grain, base.grain, 0, 0.3),
-    map: normMap(o.map, base.map),
   };
 }
 
-/** Same treatment as every other colour: these reach body.style as text. */
-function normMap(v: unknown, base: MapPalette): MapPalette {
-  const o = (v ?? {}) as Record<string, unknown>;
-  const out = {} as MapPalette;
-  for (const key of MAP_PALETTE_KEYS) out[key] = normHex(o[key], base[key]);
-  return out;
-}
 
 /** Every design token the studio drives, derived from the settings. */
 export function buildVars(s: StyleSettings): Record<string, string> {
@@ -251,7 +233,6 @@ export function buildVars(s: StyleSettings): Record<string, string> {
     '--text-heading': s.textHeading,
     '--font-body': s.fontUi,
     '--font-hud': s.fontMono,
-    ...Object.fromEntries(MAP_PALETTE_KEYS.map(k => [MAP_VARS[k], s.map[k]])),
   };
 }
 
@@ -368,7 +349,6 @@ export function readTheme(): StyleSettings {
     textMuted: hex('--text-muted', DEFAULTS.textMuted),
     textHeading: hex('--text-heading', DEFAULTS.textHeading),
     glow: parseAlpha(v('--gold-glow', ''), DEFAULTS.glow),
-    map: readMapPalette(name => cs.getPropertyValue(name)),
   };
 }
 
@@ -380,7 +360,7 @@ export function readTheme(): StyleSettings {
  * palette and pushes it in. An event keeps that one-way: the token engine has
  * no idea the map exists.
  */
-export const STYLE_EVENT = 'osiris:style';
+export const STYLE_EVENT = 'NexaFreight:style';
 
 function announce() {
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(STYLE_EVENT));

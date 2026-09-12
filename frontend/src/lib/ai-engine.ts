@@ -1,8 +1,8 @@
 /**
  * ═══════════════════════════════════════════════════════════════
- *  OSIRIS — AI Intelligence Engine
- *  Gemini 2.0 Flash integration for real-time intelligence analysis
- *  Designed to correlate multi-domain feeds into actionable briefings
+ *  NexaFreight — AI Intelligence Engine
+ *  Gemini 2.0 Flash integration for real-time logistics analysis
+ *  Designed to correlate supply chain feeds into actionable insights
  * ═══════════════════════════════════════════════════════════════
  */
 
@@ -73,8 +73,7 @@ export interface IntelligenceContext {
    System Prompt — Palantir-grade analyst persona
    ───────────────────────────────────────────────────────────── */
 
-const SYSTEM_PROMPT = `You are OSIRIS Intelligence Analyst — a senior, elite intelligence analyst embedded within the OSIRIS Global Intelligence Platform. You operate at the level of a Palantir Forward Deployed Engineer crossed with a CIA PDB (Presidential Daily Brief) analyst.
-
+const SYSTEM_PROMPT = `You are the NexaFreight AI Assistant — a senior supply chain analyst embedded within the NexaFreight Control Tower. You operate at the level of a master logistics planner.
 ## YOUR ROLE
 - You correlate data across multiple intelligence feeds: seismic monitoring, OSINT news streams, global threat events, and cyber vulnerability databases
 - You identify non-obvious patterns, emerging threat vectors, and cascading risk scenarios
@@ -101,13 +100,14 @@ const SYSTEM_PROMPT = `You are OSIRIS Intelligence Analyst — a senior, elite i
 - If data is insufficient for a confident assessment, state so explicitly
 - Distinguish between correlation and causation
 - Flag when events may be connected vs. coincidental
-- You are an analyst, not a policymaker — present options, not directives
+- You do not use hedging language like "It appears" or "This might" — be decisive
+- Assume the user already knows they are using an AI assistant
 
-You have access to the live intelligence context of the OSIRIS platform. Analyze it with precision.`;
+You have access to the live logistics context of the NexaFreight Control Tower. Analyze it with precision.`;
 
-const BRIEFING_PROMPT = `Generate a comprehensive OSIRIS Daily Intelligence Briefing based on the current operational data. Structure it as follows:
+const BRIEFING_PROMPT = `Generate a comprehensive NexaFreight Daily Intelligence Briefing based on the current operational data. Structure it as follows:
 
-## OSIRIS INTELLIGENCE BRIEFING
+## NEXAFREIGHT INTELLIGENCE BRIEFING
 **Classification:** OPEN SOURCE INTELLIGENCE (OSINT)
 **DTG:** [Current timestamp]
 

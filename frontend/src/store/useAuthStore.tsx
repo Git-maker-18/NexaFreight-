@@ -1,7 +1,7 @@
 /**
  * NexaFreight auth store — in-memory only.
  *
- * No Zustand in OSIRIS, so this is a minimal hand-rolled store that uses
+ * No Zustand in NexaFreight, so this is a minimal hand-rolled store that uses
  * React context + a module-level singleton for non-React callers.
  *
  * Security rationale (per NexaFreight project docs):

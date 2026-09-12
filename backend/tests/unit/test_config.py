@@ -17,14 +17,14 @@ def test_settings_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.delenv("ENVIRONMENT", raising=False)
     monkeypatch.delenv("LOG_LEVEL", raising=False)
 
-    settings = Settings(jwt_secret=SecretStr("test-secret-key"))
+    settings = Settings(_env_file=None, jwt_secret=SecretStr("test-secret-key"))
 
     assert settings.environment == "development"
     assert settings.log_level == "INFO"
     assert settings.debug is False
     assert settings.jwt_algorithm == "HS256"
     assert settings.jwt_expiry_minutes == 60
-    assert settings.gemini_model == "gemini-pro"
+    assert settings.gemini_model == "gemini-1.5-flash"
     assert settings.ollama_base_url == "http://localhost:11434"
 
 
@@ -100,7 +100,7 @@ def test_get_settings_singleton() -> None:
 
 def test_optional_api_keys_none_by_default() -> None:
     """Optional API keys (Gemini, AIS Stream) default to None."""
-    settings = Settings(jwt_secret=SecretStr("x"))
+    settings = Settings(_env_file=None, jwt_secret=SecretStr("x"))
 
     assert settings.gemini_api_key is None
     assert settings.aisstream_api_key is None

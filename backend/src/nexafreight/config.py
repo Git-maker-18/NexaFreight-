@@ -41,8 +41,8 @@ class Settings(BaseSettings):
 
     # --- CORS ---
     allowed_origins: list[str] = Field(
-        default=["http://localhost:5173", "http://127.0.0.1:5173"],
-        description="CORS allowed origins (frontend dev server)",
+        default=["http://localhost:3000", "http://127.0.0.1:3000"],
+        description="CORS allowed origins (Next.js frontend dev server on port 3000)",
     )
 
     # --- External APIs (all optional/free-tier) ---
@@ -59,17 +59,29 @@ class Settings(BaseSettings):
         default=True,
         description="Use live AIS (AISStreamAdapter) vs replay (ReplayFeedAdapter)",
     )
+    enable_disruption_detector: bool = Field(
+        default=True,
+        description="Enable/disable the background disruption detector worker (every 15 min)",
+    )
+    enable_sla_checker: bool = Field(
+        default=True,
+        description="Enable/disable the background SLA checker worker (every 5 min)",
+    )
 
     ais_replay_data_path: str | None = Field(
         default=None,
         description="Path to Parquet files for AIS replay (used when use_live_ais=False)",
     )
     aisstream_api_key: SecretStr | None = Field(default=None)
+    ors_api_key: SecretStr | None = Field(
+        default=None,
+        description="OpenRouteService API key for road routing (optional, uses fallback if omitted)",
+    )
 
     # Google Gemini (free tier)
 
     gemini_api_key: SecretStr | None = Field(default=None)
-    gemini_model: str = Field(default="gemini-pro")
+    gemini_model: str = Field(default="gemini-1.5-flash")
 
     # Ollama (local, no key)
     ollama_base_url: str = Field(default="http://localhost:11434")
@@ -105,7 +117,7 @@ class Settings(BaseSettings):
         return self.environment == "test"
 
     # --- Validators ---
-    @field_validator("aisstream_api_key", "gemini_api_key", mode="before")
+    @field_validator("aisstream_api_key", "ors_api_key", "gemini_api_key", mode="before")
     @classmethod
     def empty_str_to_none(cls, v: Any) -> Any:
         if v == "" or (isinstance(v, SecretStr) and not v.get_secret_value()):

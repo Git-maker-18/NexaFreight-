@@ -170,7 +170,7 @@ const jsonLd = {
   screenshot: `${SITE_URL}/og-image.png`,
   author: {
     "@type": "Organization",
-    name: "Osiris Project",
+    name: "NexaFreight Project",
     url: SITE_URL,
   },
 };

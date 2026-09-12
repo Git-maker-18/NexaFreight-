@@ -14,8 +14,8 @@ function LoginForm() {
   const router = useRouter()
   const { setAuth } = useAuthStore()
 
-  const [email, setEmail] = useState('operator@nexafreight.dev')
-  const [password, setPassword] = useState('changeme123')
+  const [email, setEmail] = useState('operator@nexafreight.local')
+  const [password, setPassword] = useState('operator123')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [expiredNotice, setExpiredNotice] = useState(false)
@@ -46,7 +46,7 @@ function LoginForm() {
       // Persist into React context so components can read it
       setAuth(loginResp.access_token, user)
 
-      // Redirect to the main OSIRIS dashboard
+      // Redirect to the main NexaFreight dashboard
       router.push('/')
     } catch (err) {
       console.error('[NexaFreight login error]', err)
@@ -223,9 +223,9 @@ export default function LoginPage() {
   return <LoginForm />
 }
 
-// ─── Styles (inline, using OSIRIS CSS variables via string literals) ──────────
+// ─── Styles (inline, using NexaFreight CSS variables via string literals) ──────────
 // Using inline styles avoids any className/Tailwind conflicts with the global
-// OSIRIS stylesheet while still reading from its CSS custom properties.
+// NexaFreight stylesheet while still reading from its CSS custom properties.
 
 const styles: Record<string, React.CSSProperties> = {
   page: {

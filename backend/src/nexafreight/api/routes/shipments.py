@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from sqlalchemy import and_, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -467,3 +467,254 @@ async def get_shipment_events(
         size=size,
         total_pages=total_pages,
     )
+
+
+# ============================================================================
+# Definitive Plan: GET /shipments/{id}/predict  (Phase 9 — new endpoint)
+# ============================================================================
+
+
+@router.get("/{shipment_id}/predict")
+async def predict_shipment_delay(
+    request: Request,
+    shipment_id: str,
+    db: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """ML delay prediction for one shipment (Plan §Phase 9).
+
+    Uses the frozen ETA quantile model: P50 transit → delay vs the strictest
+    SLA deadline. Falls back to the planned ETA (provenance=FALLBACK) when
+    the registry is unavailable, never a 500.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select as _select
+
+    from nexafreight.enums import LegStatus as _LegStatus
+    from nexafreight.models import Location as _Location
+    from nexafreight.models import Order as _Order
+    from nexafreight.schemas.ops import ShipmentPredictResponse
+    from nexafreight.services.sla_checker import compute_sla_risk
+
+    shipment = await db.get(Shipment, shipment_id)
+    if shipment is None:
+        raise HTTPException(status_code=404, detail="shipment not found")
+    await db.refresh(shipment, ["legs", "orders"])
+
+    order = (
+        (
+            await db.execute(
+                _select(_Order)
+                .where(_Order.shipment_id == shipment_id)
+                .order_by(_Order.sla_deadline)
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+    live_legs = [l for l in shipment.legs if str(l.status) != _LegStatus.REPLACED]
+    total_km = sum(l.distance_km or 0.0 for l in live_legs)
+    leg_count = max(1, len(live_legs))
+
+    deadline = order.sla_deadline if order is not None else None
+    if deadline is not None and deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=UTC)
+
+    provenance = "FALLBACK"
+    model_version: str | None = None
+    p50_eta: datetime | None = None
+    delay_p50_hours = 0.0
+
+    # Registry shared app-wide at startup; absent in tests / degraded runs.
+    registry = getattr(request.app.state, "ml_registry", None)
+
+    if registry is not None and order is not None:
+        try:
+            eta_model = registry.get_eta_model()
+            origin = await db.get(_Location, shipment.origin_id)
+            destination = await db.get(_Location, shipment.destination_id)
+            order_date = order.order_date or datetime.now(UTC)
+            if order_date.tzinfo is None:
+                order_date = order_date.replace(tzinfo=UTC)
+            scheduled_days = max(
+                1.0,
+                ((deadline - order_date).total_seconds() / 86400.0) if deadline else 15.0,
+            )
+            features = {
+                "shipping_mode": str(shipment.primary_transport_mode),
+                "cargo_class": str(order.cargo_class),
+                "revenue": float(order.revenue),
+                "shipping_cost": float(order.shipping_cost),
+                "scheduled_shipping_days": scheduled_days,
+                "order_country": (origin.country_code if origin else "US"),
+                "customer_country": (destination.country_code if destination else "US"),
+                "product_price": float(order.items[0].unit_price if order.items else order.revenue),
+                "order_profit": float(order.revenue - order.shipping_cost),
+                "sla_month": deadline.month if deadline else order_date.month,
+                "sla_weekday": deadline.weekday() if deadline else order_date.weekday(),
+                "sla_quarter": (
+                    ((deadline.month - 1) // 3 + 1) if deadline else ((order_date.month - 1) // 3 + 1)
+                ),
+                "total_distance_km": total_km,
+                "leg_count": leg_count,
+            }
+            prediction = eta_model.predict(features)
+            model_version = getattr(registry, "eta_model_version", None)
+            p50_eta = order_date + timedelta(days=float(prediction.p50_eta_days))
+            provenance = "DERIVED"
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Shipment predict ML path failed, using fallback: %s", exc)
+            registry = None
+
+    if p50_eta is None:
+        # Fallback: latest planned arrival across live legs.
+        if live_legs:
+            latest = max(l.planned_arrival for l in live_legs)
+            p50_eta = latest if latest.tzinfo else latest.replace(tzinfo=UTC)
+        else:
+            p50_eta = datetime.now(UTC)
+        model_version = None
+
+    if deadline is not None and p50_eta > deadline:
+        delay_p50_hours = (p50_eta - deadline).total_seconds() / 3600.0
+    delay_p50_hours = max(delay_p50_hours, 0.0)
+
+    risk = compute_sla_risk(deadline, p50_eta)
+    return ShipmentPredictResponse(
+        shipment_id=shipment_id,
+        delay_p50_hours=round(delay_p50_hours, 2),
+        sla_risk_level=str(risk),
+        model_version=model_version,
+        provenance=provenance,
+    ).model_dump()
+
+
+# ============================================================================
+# Definitive Plan: GET /shipments/{id}/financials  (Phase 6 — new endpoint)
+# ============================================================================
+
+
+@router.get("/{shipment_id}/financials")
+async def shipment_financials(
+    shipment_id: str,
+    db: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Per-shipment P&L snapshot (Plan §Phase 6).
+
+    ADMIN / OPERATOR only — cost/margin visibility is restricted.
+    """
+    import math
+    from datetime import UTC, datetime
+
+    from nexafreight.enums import UserRole
+    from nexafreight.schemas.ops import (
+        FinancialOrderOut,
+        PnlSnapshotOut,
+        ShipmentFinancialsResponse,
+    )
+    from nexafreight.services.alert_engine import latest_planned_arrival
+    from nexafreight.services.disruption_detector import TONNES_PER_CONTAINER
+    from nexafreight.services.financial_engine import (
+        CO2_G_PER_T_KM,
+        SLA_PENALTY_PCT_PER_DAY,
+        calculate_freight_cost,
+        calculate_sla_penalty,
+        generate_pnl_snapshot,
+    )
+
+    if str(current_user.role) not in (UserRole.ADMIN, UserRole.OPERATOR):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+    shipment = await db.get(Shipment, shipment_id)
+    if shipment is None:
+        raise HTTPException(status_code=404, detail="shipment not found")
+    await db.refresh(shipment, ["legs", "orders"])
+
+    revenue = sum(o.revenue for o in shipment.orders)
+    shipping = sum(o.shipping_cost for o in shipment.orders)
+
+    eta = latest_planned_arrival(shipment)
+    now = datetime.now(UTC)
+    sla_penalty = 0.0
+    if eta is not None:
+        if eta.tzinfo is None:
+            eta = eta.replace(tzinfo=UTC)
+        for order in shipment.orders:
+            deadline = order.sla_deadline
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=UTC)
+            if eta > deadline:
+                days_late = max(1, math.ceil((eta - deadline).total_seconds() / 86400.0))
+                sla_penalty += calculate_sla_penalty(
+                    revenue=order.revenue,
+                    penalty_pct=SLA_PENALTY_PCT_PER_DAY,
+                    days_late=days_late,
+                )
+
+    demurrage = 0.0
+    dwell_days = max(0, (now - eta).days) if eta is not None else 0
+    if dwell_days > 0:
+        from nexafreight.services.financial_engine import (
+            DEMURRAGE_DAILY_RATE,
+            DEMURRAGE_FREE_DAYS,
+            calculate_demurrage,
+        )
+
+        demurrage = calculate_demurrage(
+            extra_days=dwell_days,
+            free_days=DEMURRAGE_FREE_DAYS,
+            daily_rate=DEMURRAGE_DAILY_RATE,
+        ) * max(1, shipment.container_count)
+
+    weight_t = max(1, shipment.container_count) * TONNES_PER_CONTAINER
+    freight = 0.0
+    carbon = 0.0
+    for leg in shipment.legs:
+        km = leg.distance_km or 0.0
+        mode = str(leg.transport_mode)
+        freight += calculate_freight_cost(km, weight_t, mode)
+        co2_kg = leg.co2_kg
+        if co2_kg is None:
+            co2_kg = CO2_G_PER_T_KM.get(mode, CO2_G_PER_T_KM["SEA"]) * km * weight_t / 1000.0
+        carbon += co2_kg * 0.08
+
+    pnl = generate_pnl_snapshot(
+        revenue_usd=revenue,
+        shipping_cost_usd=shipping,
+        sla_penalty_usd=sla_penalty,
+        demurrage_usd=demurrage,
+        freight_cost_usd=freight,
+        carbon_cost_usd=carbon,
+    )
+
+    return ShipmentFinancialsResponse(
+        shipment_id=shipment_id,
+        container_count=max(1, shipment.container_count),
+        container_weight_t=TONNES_PER_CONTAINER,
+        orders=[
+            FinancialOrderOut(
+                order_number=o.order_number,
+                revenue=o.revenue,
+                shipping_cost=o.shipping_cost,
+                sla_status=str(o.sla_status),
+            )
+            for o in shipment.orders
+        ],
+        pnl=PnlSnapshotOut(
+            revenue_usd=round(pnl.revenue_usd, 2),
+            shipping_cost_usd=round(pnl.shipping_cost_usd, 2),
+            sla_penalty_usd=round(pnl.sla_penalty_usd, 2),
+            demurrage_usd=round(pnl.demurrage_usd, 2),
+            freight_cost_usd=round(pnl.freight_cost_usd, 2),
+            carbon_cost_usd=round(pnl.carbon_cost_usd, 2),
+            total_costs_usd=round(pnl.total_costs_usd, 2),
+            margin_usd=round(pnl.margin_usd, 2),
+            margin_pct=(round(pnl.margin_pct, 4) if pnl.margin_pct is not None else None),
+            warnings=pnl.warnings,
+        ),
+        provenance="DERIVED",
+    ).model_dump()

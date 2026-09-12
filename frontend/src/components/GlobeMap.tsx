@@ -1,14 +1,32 @@
-import { buildGeometry, closeRing, drawReducer, initialDrawState, measure, type DrawAction, type DrawMode, type DrawProgress, type DrawResult, type DrawState } from '@/lib/draw';
 'use client';
 
 import { useEffect, useRef, useState, useCallback, memo } from 'react';
 import maplibregl from 'maplibre-gl';
 
-import { MAP_DEFAULTS, MAP_PALETTE_KEYS, readMapPalette, satColorFor, type MapPalette } from '@/lib/map-palette';
-import { STYLE_EVENT } from '@/lib/style-tokens';
-import { arrivalBeacons } from '@/lib/malware-intel';
-import LiveNewsPreviews, { type PreviewFeed } from '@/components/LiveNewsPreviews';
-import { getPorts, getAllRoutes, getShipmentDetail, type PositionReport } from '@/lib/nexafreight';
+
+/* Map pigment constants — were lib/map-palette.ts before Phase 0 removed it.
+ * Values mirror the `--map-*` custom properties in globals.css; the palette is
+ * read once statically now that Style Studio's map section is gone (Definitive
+ * Plan Phase 0: "map color palette — not needed"). */
+interface MapPalette {
+  cctv: string;
+  flightCivil: string;
+  flightPrivate: string;
+  flightGov: string;
+  flightMilitary: string;
+  flightUnknown: string;
+}
+const MAP_DEFAULTS: MapPalette = {
+  cctv: '#00e676',
+  flightCivil: '#00e5ff',
+  flightPrivate: '#ffd700',
+  flightGov: '#ff9500',
+  flightMilitary: '#ff0000',
+  flightUnknown: '#546e7a',
+};
+
+
+import { getPorts, getWarehouses, getAllRoutes, getShipmentDetail, type PositionReport } from '@/lib/nexafreight';
 import { useSSEPositions } from '@/hooks/useSSEPositions';
 import { getProvenanceBadgeHtml } from '@/components/ProvenanceBadge';
 
@@ -41,16 +59,6 @@ interface GlobeMapProps {
   theme?: 'core' | 'ghost';
   drawnPolygons?: Array<{ id: string; name: string; geojson: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.LineString>; color: string }>;
   arcgisLayers?: Array<{ id: string; title: string; geojson: any; color?: string; opacity?: number }>;
-  /** Active draw mode, or null when not drawing. */
-  drawMode?: DrawMode | null;
-  onDrawProgress?: (p: DrawProgress | null) => void;
-  onDrawCancel?: () => void;
-  /**
-   * Undo / finish / cancel driven from a button rather than the keyboard.
-   * Carries a seq so pressing the same button twice still registers.
-   */
-  drawCommand?: { action: DrawAction["type"]; seq: number } | null;
-  onDrawComplete?: (result: DrawResult) => void;
   onMapCenter?: (coords: { lat: number; lng: number; bounds?: { west: number; south: number; east: number; north: number } }) => void;
   /** Active turn-by-turn route drawn as a line with origin/destination pins. */
   route?: {
@@ -299,7 +307,7 @@ interface LiveMarkerRecord {
   latestPos?: PositionReport;
 }
 
-function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightClick, onViewStateChange, flyToLocation, projection = 'globe', mapStyle = 'dark', sweepData, scanTargets = [], demoMode = false, theme = 'core', drawnPolygons = [], arcgisLayers = [], drawMode = null, onDrawComplete, onDrawProgress, onDrawCancel, drawCommand = null, onMapCenter, route = null, userLocation = null, followUser = false, onFollowInterrupt, navigating = false, aircraftAirports = {} }: GlobeMapProps) {
+function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightClick, onViewStateChange, flyToLocation, projection = 'globe', mapStyle = 'dark', sweepData, scanTargets = [], demoMode = false, theme = 'core', drawnPolygons = [], arcgisLayers = [], onMapCenter, route = null, userLocation = null, followUser = false, onFollowInterrupt, navigating = false, aircraftAirports = {} }: GlobeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
@@ -310,14 +318,12 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
    * the recolour effects; held in a ref as well for the click handlers, which
    * are registered once on load and would otherwise close over the first value.
    */
-  const [palette, setPalette] = useState<MapPalette>(MAP_DEFAULTS);
+  const palette: MapPalette = MAP_DEFAULTS;
   const paletteRef = useRef(palette);
-  useEffect(() => { paletteRef.current = palette; }, [palette]);
   const prevStyleRef = useRef(mapStyle);
   const prevDrawnPolygonsRef = useRef<string[]>([]);
   const prevArcgisLayersRef = useRef<string[]>([]);
 
-  const drawingCoordsRef = useRef<number[][]>([]);
 
   // ── NexaFreight Route & Live Marker Lookups (Step 4) ──
   const legToShipmentRef = useRef<Map<string, { shipmentId: string; mode: string }>>(new Map());
@@ -630,6 +636,30 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
     map.addImage(id, { width: size, height: size, data: new Uint8Array(ctx.getImageData(0, 0, size, size).data) });
   }, []);
 
+  const createWarehouseIcon = useCallback((map: maplibregl.Map, id: string, color: string, size: number = 24) => {
+    if (map.hasImage(id)) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    const cx = size / 2, cy = size / 2;
+    ctx.fillStyle = 'rgba(11, 13, 25, 0.95)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, size / 2 - 1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = color;
+    ctx.stroke();
+
+    ctx.fillStyle = color;
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('W', cx, cy + 1);
+
+    const imgData = ctx.getImageData(0, 0, size, size);
+    map.addImage(id, imgData);
+  }, []);
+
   const createAirportIcon = useCallback((map: maplibregl.Map, id: string, color: string, size: number = 24) => {
     if (map.hasImage(id)) return;
     const canvas = document.createElement('canvas');
@@ -745,7 +775,7 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
         // A failed constructor leaves its canvas behind; the next attempt needs a clean container.
         container.innerHTML = '';
         if (canvasContextAttributes === attributeFallbacks[attributeFallbacks.length - 1]) throw e;
-        console.warn('[OSIRIS] WebGL context rejected, retrying with weaker attributes:', e instanceof Error ? e.message : e);
+        console.warn('[NexaFreight] WebGL context rejected, retrying with weaker attributes:', e instanceof Error ? e.message : e);
       }
     }
     if (!map) return;
@@ -762,14 +792,14 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
          is what let the two drift: the effect's ghost palette was four
          distinct violets, this block's was one, and whichever ran last won. */
       const bootStyle = getComputedStyle(document.body);
-      const boot = readMapPalette(name => bootStyle.getPropertyValue(name));
+      const boot = MAP_DEFAULTS;
       const cameraColor = boot.cctv;
       const flightCom = boot.flightCivil;
       const flightPriv = boot.flightPrivate;
       const flightGov = boot.flightGov;
       const flightMil = boot.flightMilitary;
 
-      // Create icons — OSIRIS Unified Palette
+      // Create icons — NexaFreight Unified Palette
       createIcon(map, 'plane-cyan', flightCom, 24);   
       createIcon(map, 'plane-green', flightPriv, 24);   
       createIcon(map, 'plane-pink', flightGov, 24);    
@@ -783,8 +813,9 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
       createDot(map, 'dot-cctv', cameraColor, 10);
       createTruckIcon(map, 'truck-green', '#00E676', 24);
       createAirportIcon(map, 'airport-orange', '#f97316', 24);
+      createWarehouseIcon(map, 'warehouse-blue', '#3b82f6', 24);
 
-      const sources = ['ports','airports','routes','trucks','flights','military','jets','private-fl','satellites','earthquakes','gdelt','day-night','cctv','fires','weather','infrastructure','maritime','maritime-choke','maritime-ships','live-news','conflict-zones', 'war-alerts-targets', 'war-alerts-lines', 'balloons', 'radiation', 'ip-sweep-devices', 'ip-sweep-pulse', 'ip-sweep-connections', 'scan-targets', 'sdk-entities', 'sdk-links', 'malware-nodes', 'malware-new', 'network-mesh', 'cyber-arcs', 'cyber-heads', 'cyber-impacts', 'gdelt-events', 'cf-outages', 'cf-attacks'];
+      const sources = ['ports','airports','routes','trucks','flights','military','jets','private-fl','satellites','earthquakes','gdelt','day-night','cctv','fires','weather','infrastructure','maritime','maritime-choke','maritime-ships','warehouses','live-news','conflict-zones', 'war-alerts-targets', 'war-alerts-lines', 'balloons', 'radiation', 'ip-sweep-devices', 'ip-sweep-pulse', 'ip-sweep-connections', 'scan-targets', 'sdk-entities', 'sdk-links', 'malware-nodes', 'malware-new', 'network-mesh', 'cyber-arcs', 'cyber-heads', 'cyber-impacts', 'gdelt-events', 'cf-outages', 'cf-attacks'];
       sources.forEach(s => map.addSource(s, { type: 'geojson', data: EMPTY_FC }));
 
       // Immediately populate pre-defined cargo airport hubs
@@ -851,6 +882,23 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
         },
       });
 
+      map.addLayer({
+        id: 'routes-sea-arrows',
+        type: 'symbol',
+        source: 'routes',
+        filter: ['==', ['get', 'mode'], 'SEA'],
+        layout: {
+          'symbol-placement': 'line',
+          'symbol-spacing': 150,
+          'text-field': '▶',
+          'text-size': ['interpolate', ['linear'], ['zoom'], 1, 8, 5, 12, 10, 16],
+          'text-keep-upright': false,
+        },
+        paint: {
+          'text-color': '#3b82f6',
+        },
+      });
+
       // Air routes: solid orange (#f97316) - great-circle arcs between airports
       map.addLayer({
         id: 'routes-air',
@@ -891,6 +939,25 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
         },
       });
 
+      map.addLayer({
+        id: 'routes-road-arrows',
+        type: 'symbol',
+        source: 'routes',
+        filter: ['==', ['get', 'mode'], 'ROAD'],
+        layout: {
+          'symbol-placement': 'line',
+          'symbol-spacing': 100,
+          'text-field': '▶',
+          'text-size': ['interpolate', ['linear'], ['zoom'], 1, 8, 5, 10, 10, 14],
+          'text-keep-upright': false,
+        },
+        paint: {
+          'text-color': '#0B0D19',
+          'text-halo-color': '#00E676',
+          'text-halo-width': 1,
+        },
+      });
+
       // Rail routes: purple (#a855f7)
       map.addLayer({
         id: 'routes-rail',
@@ -923,14 +990,10 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
         type: 'symbol',
         source: 'trucks',
         layout: {
-          'icon-image': 'truck-green',
-          'icon-size': ['interpolate', ['linear'], ['zoom'], 1, 0.7, 5, 0.85, 10, 1.1],
-          'icon-allow-overlap': true,
-          'icon-ignore-placement': true,
-          'text-field': ['get', 'truck_id'],
-          'text-size': 9,
+          'text-field': ['concat', '🚚 ', ['get', 'truck_id']],
+          'text-size': 14,
           'text-font': ['JetBrains Mono Bold', 'Open Sans Bold'],
-          'text-offset': [0, 1.3],
+          'text-offset': [0, 0],
           'text-allow-overlap': false,
         },
         paint: {
@@ -970,9 +1033,9 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
         source: 'ports',
         minzoom: 5,
         layout: {
-          'text-field': ['get', 'name'],
-          'text-size': 10,
-          'text-font': ['Open Sans Regular'],
+          'text-field': ['concat', '⚓ ', ['get', 'name']],
+          'text-size': 11,
+          'text-font': ['Open Sans Bold'],
           'text-offset': [0, 1.2],
           'text-anchor': 'top',
           'text-allow-overlap': false,
@@ -1024,7 +1087,30 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
         map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer'; });
         map.on('mouseleave', layer, () => { map.getCanvas().style.cursor = ''; });
       });
-      ['ports-layer', 'airports-layer'].forEach(layer => {
+      map.addLayer({
+        id: 'warehouses-layer',
+        type: 'symbol',
+        source: 'warehouses',
+        layout: {
+          'icon-image': 'warehouse-blue',
+          'icon-size': ['interpolate', ['linear'], ['zoom'], 1, 0.75, 5, 0.9, 10, 1.15],
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+          'text-field': ['get', 'name'],
+          'text-size': 10,
+          'text-font': ['JetBrains Mono Bold', 'Open Sans Bold'],
+          'text-offset': [0, 1.2],
+          'text-anchor': 'top',
+        },
+        paint: {
+          'text-color': '#3b82f6',
+          'text-halo-color': 'rgba(11,13,25,0.9)',
+          'text-halo-width': 1.5,
+          'icon-opacity': ['interpolate', ['linear'], ['zoom'], 1, 0.6, 5, 1],
+        }
+      });
+
+      ['ports-layer', 'airports-layer', 'warehouses-layer'].forEach(layer => {
         map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer'; });
         map.on('mouseleave', layer, () => { map.getCanvas().style.cursor = ''; });
       });
@@ -1342,7 +1428,7 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
         'text-offset': [0, 1.5], 'text-allow-overlap': false,
       }, paint: { 'text-color': ['match', ['get','status'], 'DANGER','#D32F2F', 'WARNING','#E65100', '#7E57C2'], 'text-halo-color': '#000', 'text-halo-width': 1 }});
 
-      // ══ OSIRIS SDK — Lattice Intelligence Mesh ══
+      // ══ NexaFreight SDK — Lattice Intelligence Mesh ══
       // Polybolos Style: Delicate, translucent, steel-blue splined mesh
 
       // ── SEA domain (Distinct Solid Lines) ──
@@ -1456,7 +1542,19 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
       loadPorts();
 
       // ── Fetch & Populate NexaFreight Routes (Step 5) ──
-      const loadRoutes = async () => {
+      const loadWarehouses = () => {
+      getWarehouses().then(resp => {
+        const src = map.getSource('warehouses') as maplibregl.GeoJSONSource | undefined;
+        if (src && resp?.type === 'FeatureCollection') {
+          src.setData(resp as never);
+        }
+      }).catch(err => {
+        console.warn('[NexaFreight] Failed to load warehouses:', err);
+      });
+    };
+    loadWarehouses();
+
+    const loadRoutes = async () => {
         try {
           const routesResp = await getAllRoutes();
           const src = map.getSource('routes') as maplibregl.GeoJSONSource | undefined;
@@ -1552,7 +1650,7 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
           <div id="ac-${idSafe(p.icao24||'')}" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06);">
             <span style="color:#5C5A54;font-size:9px;letter-spacing:0.1em;">IDENTIFYING AIRFRAME…</span>
           </div>
-          <button onclick="window.osirisWatchFlight && window.osirisWatchFlight({ icao24: '${idSafe(p.icao24||'')}', callsign: '${idSafe(cs)}' })" style="width:100%;margin-top:8px;padding:6px 12px;background:rgba(0,229,255,0.10);border:1px solid rgba(0,229,255,0.35);color:#7FE9FF;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:bold;letter-spacing:0.1em;border-radius:4px;cursor:pointer;">+ WATCH THIS AIRCRAFT</button>
+          <button onclick="window.NexaFreightWatchFlight && window.NexaFreightWatchFlight({ icao24: '${idSafe(p.icao24||'')}', callsign: '${idSafe(cs)}' })" style="width:100%;margin-top:8px;padding:6px 12px;background:rgba(0,229,255,0.10);border:1px solid rgba(0,229,255,0.35);color:#7FE9FF;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:bold;letter-spacing:0.1em;border-radius:4px;cursor:pointer;">+ WATCH THIS AIRCRAFT</button>
           <div id="${routeLoadingId}" style="margin-top:8px;padding:6px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;">
             <span style="color:#5C5A54;font-size:9px;letter-spacing:0.1em;">RESOLVING ROUTE…</span>
           </div>
@@ -1634,7 +1732,7 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
     // ── Satellites (SatNOGS powered) ──
     // Layers with their own click handlers. The satellite pick defers to
     // these, and to nothing else — the basemap is not a click target.
-    const CLICKABLE_LAYERS = new Set(['ports-layer','airports-layer','routes-sea','routes-air','routes-road','routes-rail','routes-trucks-layer','conflict-icons','cctv-dots','eq-circles','fires-heat',
+    const CLICKABLE_LAYERS = new Set(['ports-layer','airports-layer','warehouses-layer','routes-sea','routes-air','routes-road','routes-rail','routes-trucks-layer','conflict-icons','cctv-dots','eq-circles','fires-heat',
       'gdelt-dots','weather-dots','infra-dots','choke-dots','news-dots',
       'balloon-dots','rad-dots','ship-dots','sweep-device-dots','scan-targets-dots',
       'sdk-sea','sdk-air','sdk-intel','malware-dots','cyber-heads','gdelt-events-dots',
@@ -1806,7 +1904,7 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
     });
 
 
-    // ── OSIRIS SDK link click ──
+    // ── NexaFreight SDK link click ──
     const SDK_SOURCE_URLS: Record<string, string> = {
       'AIS Maritime': 'https://www.marinetraffic.com',
       'AIS Stream': 'https://aisstream.io',
@@ -1820,7 +1918,7 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
         if (!e.features?.length) return;
         const p = e.features[0].properties as any;
         const coords = e.lngLat;
-        const srcUrl = p.url || SDK_SOURCE_URLS[p.source] || 'https://osirisai.live';
+        const srcUrl = p.url || SDK_SOURCE_URLS[p.source] || 'https://nexafreight.com';
         const domainLabel = p.domain === 'SEA' ? '⚓ MARITIME' : p.domain === 'AIR' ? '✈ AIR CORRIDOR' : '🛡 NAVAL INTEL';
         const domainColor = p.domain === 'SEA' ? '#4FC3F7' : p.domain === 'AIR' ? '#B3E5FC' : '#81D4FA';
         const linkStyle = 'text-decoration:none;padding:3px 8px;border-radius:4px;font-size:9px;font-weight:700;letter-spacing:0.05em;';
@@ -1833,7 +1931,7 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
             <div><span style="color:#5C5A54;">FROM</span><br/><span style="color:#E8E6E0;">${htmlEsc(p.fromName || 'Origin')}</span></div>
             <div><span style="color:#5C5A54;">TO</span><br/><span style="color:#E8E6E0;">${htmlEsc(p.toName || 'Destination')}</span></div>
             <div><span style="color:#5C5A54;">DOMAIN</span><br/><span style="color:${domainColor};">${p.domain}</span></div>
-            <div><span style="color:#5C5A54;">SOURCE</span><br/><a href="${urlSafe(srcUrl)}" target="_blank" style="color:${domainColor};text-decoration:underline;cursor:pointer;">${htmlEsc(p.source || 'OSIRIS')}</a></div>
+            <div><span style="color:#5C5A54;">SOURCE</span><br/><a href="${urlSafe(srcUrl)}" target="_blank" style="color:${domainColor};text-decoration:underline;cursor:pointer;">${htmlEsc(p.source || 'NexaFreight')}</a></div>
           </div>
           <a href="${urlSafe(srcUrl)}" target="_blank" style="${linkStyle}color:${domainColor};border:1px solid ${domainColor}40;background:${domainColor}18;display:inline-block;margin-top:4px;">OPEN SOURCE ↗</a>
         </div>`);
@@ -1869,7 +1967,7 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
     });
 
     // ── Generic hover for clickables ──
-    ['ports-layer','airports-layer','routes-sea','routes-air','routes-road','routes-rail','routes-trucks-layer','conflict-icons','cctv-dots','eq-circles','fires-heat','gdelt-dots','weather-dots','infra-dots','choke-dots','news-dots','balloon-dots','rad-dots','ship-dots','sweep-device-dots','scan-targets-dots','sdk-sea','sdk-sea-glow','sdk-sea-atmo','sdk-air','sdk-air-glow','sdk-air-atmo','sdk-intel','sdk-intel-glow','sdk-intel-atmo','malware-dots','cyber-heads','gdelt-events-dots','cf-outage-dots','cf-attack-dots'].forEach(layer => {
+    ['ports-layer','airports-layer','warehouses-layer','routes-sea','routes-air','routes-road','routes-rail','routes-trucks-layer','conflict-icons','cctv-dots','eq-circles','fires-heat','gdelt-dots','weather-dots','infra-dots','choke-dots','news-dots','balloon-dots','rad-dots','ship-dots','sweep-device-dots','scan-targets-dots','sdk-sea','sdk-sea-glow','sdk-sea-atmo','sdk-air','sdk-air-glow','sdk-air-atmo','sdk-intel','sdk-intel-glow','sdk-intel-atmo','malware-dots','cyber-heads','gdelt-events-dots','cf-outage-dots','cf-attack-dots'].forEach(layer => {
       map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', layer, () => { map.getCanvas().style.cursor = ''; });
     });
@@ -2197,29 +2295,6 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
     setGeo('military', activeLayers.military ? toFeatures(data.military_flights) : []);
   }, [mapReady, data.commercial_flights, data.private_flights, data.private_jets, data.military_flights, activeLayers.flights, activeLayers.private, activeLayers.jets, activeLayers.military]);
 
-  /**
-   * Pull the palette out of the document whenever it can have changed.
-   *
-   * Two triggers, and they need different timing. The Style Studio writes the
-   * properties and then dispatches, so reading straight away is correct. A
-   * theme switch flips a class on <body> from an effect in the page component
-   * — a parent, so it runs *after* this one — and reading now would return the
-   * outgoing theme. The extra frame covers that case.
-   */
-  useEffect(() => {
-    const read = () => {
-      const cs = getComputedStyle(document.body);
-      const next = readMapPalette(name => cs.getPropertyValue(name));
-      setPalette(prev => (MAP_PALETTE_KEYS.every(k => prev[k] === next[k]) ? prev : next));
-    };
-    read();
-    const raf = requestAnimationFrame(read);
-    window.addEventListener(STYLE_EVENT, read);
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener(STYLE_EVENT, read);
-    };
-  }, [theme]);
 
     // Update aircraft icon colors dynamically on theme switch
     useEffect(() => {
@@ -2323,48 +2398,6 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
         detected_at: t.detected_at ?? 0,
       },
     })) : []);
-  }, [mapReady, data.malware_threats, activeLayers.malware, setGeo]);
-
-  /* Detections that landed while the operator was watching get a ring for a
-     minute. Without it a pushed feed is indistinguishable from a static one —
-     nodes simply appear, and the thing that makes it live goes unseen. */
-  useEffect(() => {
-    if (!mapReady || !mapRef.current || !activeLayers.malware) return;
-    const map = mapRef.current;
-
-    /* Arrivals are rare — a handful an hour — so the common case is that there
-       is nothing to draw. Tracking whether the last tick drew anything keeps
-       this from pushing an empty collection into the source five times a
-       second for the entire time the layer is on. */
-    let drawing = false;
-
-    const tick = () => {
-      const now = Date.now();
-      const beacons = arrivalBeacons(data.malware_threats ?? [], now);
-
-      if (beacons.length === 0) {
-        if (drawing) { setGeo('malware-new', []); drawing = false; }
-        return;
-      }
-
-      setGeo('malware-new', beacons.map(b => ({
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: [b.lng, b.lat] },
-        properties: { age: b.age },
-      })));
-      drawing = true;
-
-      try {
-        // One shared pulse, so the ring reads as a beacon rather than each
-        // node breathing on its own schedule.
-        map.setPaintProperty('malware-new-ring', 'circle-radius',
-          ['interpolate', ['linear'], ['get', 'age'], 0, 6 + Math.sin(now / 200) * 2, 1, 26]);
-      } catch { /* style not settled yet */ }
-    };
-
-    tick();
-    const timer = setInterval(tick, 200);
-    return () => { clearInterval(timer); setGeo('malware-new', []); };
   }, [mapReady, data.malware_threats, activeLayers.malware, setGeo]);
 
   // Network Mesh Generation (Nearest Neighbor Lattice)
@@ -2503,7 +2536,7 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
     setGeo('radiation', activeLayers.radiation && data.radiation ? data.radiation.map((r: any) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [r.lng, r.lat] }, properties: { name: r.name, city: r.city, country: r.country, reading: r.reading, status: r.status, network: r.network } })) : []);
   }, [mapReady, data.radiation, activeLayers.radiation, setGeo]);
 
-  // ══ OSIRIS SDK — Lattice Sensor Mesh ══
+  // ══ NexaFreight SDK — Lattice Sensor Mesh ══
   // Uses real submarine cable data for SEA domain, curated routes for AIR/INTEL
   useEffect(() => {
     if (!mapReady) return;
@@ -2642,8 +2675,8 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
     setVis(['sdk-sea','sdk-sea-glow','sdk-sea-atmo'], activeLayers.sdk_sea !== false);
     setVis(['sdk-air','sdk-air-glow','sdk-air-atmo'], activeLayers.sdk_air !== false);
     setVis(['sdk-intel','sdk-intel-glow','sdk-intel-atmo'], activeLayers.sdk_naval !== false);
-    setVis(['ports-layer', 'ports-label', 'airports-glow', 'airports-layer'], (activeLayers as any).ports !== false);
-    setVis(['routes-sea', 'routes-air', 'routes-road-glow', 'routes-road', 'routes-rail', 'routes-trucks-glow', 'routes-trucks-layer'], (activeLayers as any).routes !== false);
+    setVis(['ports-layer', 'ports-label', 'airports-glow', 'airports-layer', 'warehouses-layer'], (activeLayers as any).ports !== false);
+    setVis(['routes-sea-glow', 'routes-sea', 'routes-air', 'routes-road-glow', 'routes-road', 'routes-rail', 'routes-trucks-glow', 'routes-trucks-layer'], (activeLayers as any).routes !== false);
     // Sweep layers always visible when data is present (controlled by useEffect)
     setVis(['sweep-connections','sweep-pulse-ring','sweep-device-glow','sweep-device-dots','sweep-device-labels'], true);
   }, [mapReady, activeLayers, setVis]);
@@ -2705,6 +2738,18 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
       });
     };
 
+    const loadWarehouses = () => {
+      getWarehouses().then(resp => {
+        if (cancelled) return;
+        const src = map.getSource('warehouses') as maplibregl.GeoJSONSource | undefined;
+        if (src && resp?.type === 'FeatureCollection') {
+          src.setData(resp as never);
+        }
+      }).catch(err => {
+        console.warn('[NexaFreight] Failed to load warehouses:', err);
+      });
+    };
+
     const loadRoutes = () => {
       getAllRoutes().then(routesResp => {
         if (cancelled) return;
@@ -2746,6 +2791,7 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
 
     // Initial load
     loadPorts();
+    loadWarehouses();
     loadRoutes();
 
     // Re-fetch automatically if the operator authenticates or re-authenticates
@@ -3073,7 +3119,7 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
             'fog-color': '#04040A',
             'fog-ground-blend': 0.9,
           });
-        } catch (e) { console.warn('[OSIRIS] Suppressed error:', e instanceof Error ? e.message : e); }
+        } catch (e) { console.warn('[NexaFreight] Suppressed error:', e instanceof Error ? e.message : e); }
       } else {
         map.easeTo({ pitch: 0, duration: 800 });
       }
@@ -3091,18 +3137,18 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
     try {
       if (enabled) {
         // ── 3D BUILDINGS SOURCE (OpenFreeMap CDN — no API key, globally cached) ──
-        if (!map.getSource('osiris-buildings')) {
-          map.addSource('osiris-buildings', {
+        if (!map.getSource('NexaFreight-buildings')) {
+          map.addSource('NexaFreight-buildings', {
             type: 'vector',
             url: 'https://tiles.openfreemap.org/planet',
           });
         }
 
         // ── 3D BUILDING EXTRUSION LAYER ──
-        if (!map.getLayer('osiris-3d-buildings')) {
+        if (!map.getLayer('NexaFreight-3d-buildings')) {
           map.addLayer({
-            id: 'osiris-3d-buildings',
-            source: 'osiris-buildings',
+            id: 'NexaFreight-3d-buildings',
+            source: 'NexaFreight-buildings',
             'source-layer': 'building',
             type: 'fill-extrusion',
             minzoom: 14.5,
@@ -3141,10 +3187,10 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
 
       } else {
         // ── DISABLE 3D ──
-        if (map.getLayer('osiris-3d-buildings')) map.removeLayer('osiris-3d-buildings');
+        if (map.getLayer('NexaFreight-3d-buildings')) map.removeLayer('NexaFreight-3d-buildings');
       }
     } catch (e) {
-      console.warn('[OSIRIS] 3D terrain toggle error:', e);
+      console.warn('[NexaFreight] 3D terrain toggle error:', e);
     }
   }, [mapReady, activeLayers.terrain_3d]);
 
@@ -3607,166 +3653,6 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
     });
   }, [mapReady, arcgisLayers]);
 
-  const drawCbRef = useRef({ onDrawComplete, onDrawProgress, onDrawCancel });
-  /** Set by the drawing effect so on-screen buttons can dispatch into it. */
-  const drawApplyRef = useRef<((a: DrawAction) => void) | null>(null);
-  drawCbRef.current = { onDrawComplete, onDrawProgress, onDrawCancel };
-
-  // ── DRAWING MODE ──
-  // A four-mode state machine over one set of map handlers.
-  //
-  // Every mode collects points; what differs is how many are needed and what
-  // geometry they produce. Rectangle and circle are two-click shapes, so the
-  // cursor stands in for their second point until it is committed — which is
-  // what makes the preview and the final shape come from the same code path
-  // instead of two that can disagree.
-  //
-  // Escape cancels, Backspace removes the last vertex, Enter or a double click
-  // finishes. Drawing without an undo is the difference between a tool and a
-  // demo: a misplaced vertex twenty clicks in should not cost the whole shape.
-  useEffect(() => {
-    if (!mapReady || !mapRef.current) return;
-    const map = mapRef.current;
-
-    const SRC = 'draw-temp-source';
-    const IDS = ['draw-fill-temp', 'draw-line-temp', 'draw-points-temp'];
-
-    const teardown = () => {
-      IDS.forEach(id => { if (map.getLayer(id)) map.removeLayer(id); });
-      if (map.getSource(SRC)) map.removeSource(SRC);
-      drawingCoordsRef.current = [];
-      map.getCanvas().style.cursor = '';
-      map.doubleClickZoom.enable();
-    };
-
-    if (!drawMode) {
-      teardown();
-      drawCbRef.current.onDrawProgress?.(null);
-      return;
-    }
-
-    map.doubleClickZoom.disable();
-    map.getCanvas().style.cursor = 'crosshair';
-    drawingCoordsRef.current = [];
-
-    if (!map.getSource(SRC)) {
-      map.addSource(SRC, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-      map.addLayer({
-        id: 'draw-fill-temp', type: 'fill', source: SRC,
-        filter: ['==', ['geometry-type'], 'Polygon'],
-        paint: { 'fill-color': '#00E5FF', 'fill-opacity': 0.12 },
-      });
-      map.addLayer({
-        id: 'draw-line-temp', type: 'line', source: SRC,
-        filter: ['match', ['geometry-type'], ['LineString', 'Polygon'], true, false],
-        paint: { 'line-color': '#00E5FF', 'line-width': 2, 'line-dasharray': [3, 2] },
-      });
-      map.addLayer({
-        id: 'draw-points-temp', type: 'circle', source: SRC,
-        filter: ['==', ['geometry-type'], 'MultiPoint'],
-        paint: { 'circle-color': '#00E5FF', 'circle-radius': 4, 'circle-stroke-width': 1.5, 'circle-stroke-color': '#04040A' },
-      });
-    }
-
-    // Declared before paint(), which closes over it. Leaving it below would
-    // work only while no call happens in between — a temporal-dead-zone crash
-    // waiting for someone to add one.
-    let state: DrawState = initialDrawState(drawMode);
-
-    /** Redraw the preview from committed points plus an optional cursor point. */
-    const paint = (cursor?: [number, number]) => {
-      const committed = state.points;
-      const pts = cursor ? [...committed, cursor] : committed;
-      const src = map.getSource(SRC) as maplibregl.GeoJSONSource;
-      if (!src) return;
-
-      drawCbRef.current.onDrawProgress?.(pts.length ? measure(drawMode, pts) : null);
-
-      if (pts.length === 0) {
-        src.setData({ type: 'FeatureCollection', features: [] });
-        return;
-      }
-
-      const features: any[] = [
-        { type: 'Feature', properties: {}, geometry: { type: 'MultiPoint', coordinates: committed } },
-      ];
-
-      const geom = buildGeometry(drawMode, pts);
-      if (drawMode === 'line') {
-        if (pts.length > 1) {
-          features.push({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: geom } });
-        }
-      } else if (geom.length >= 3) {
-        // Show the enclosed area as it will be, not just its outline.
-        features.push({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [closeRing(geom)] } });
-      } else if (geom.length === 2) {
-        features.push({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: geom } });
-      }
-
-      src.setData({ type: 'FeatureCollection', features });
-    };
-
-    // The interaction lives in drawReducer, which is unit tested. This is the
-    // adapter: map events in, reducer out, preview repainted.
-    const apply = (action: DrawAction) => {
-      const t = drawReducer(state, action);
-      state = t.state;
-      drawingCoordsRef.current = state.points;
-      if (t.result) drawCbRef.current.onDrawComplete?.(t.result);
-      if (t.cancelled) drawCbRef.current.onDrawCancel?.();
-      paint();
-    };
-
-    let dblGuard = false;
-
-    const onClick = (e: any) => {
-      if (dblGuard) return;
-      apply({ type: 'click', at: [e.lngLat.lng, e.lngLat.lat] });
-    };
-
-    const onMove = (e: any) => {
-      if (state.points.length === 0) return;
-      paint([e.lngLat.lng, e.lngLat.lat]);
-    };
-
-    const onDblClick = (e: any) => {
-      e.preventDefault();
-      dblGuard = true;
-      setTimeout(() => { dblGuard = false; }, 300);
-      apply({ type: 'dblclick' });
-    };
-
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === 'Escape') { ev.preventDefault(); apply({ type: 'cancel' }); }
-      else if (ev.key === 'Backspace' || ev.key === 'Delete') { ev.preventDefault(); apply({ type: 'undo' }); }
-      else if (ev.key === 'Enter') { ev.preventDefault(); apply({ type: 'finish' }); }
-    };
-    drawApplyRef.current = apply;
-
-    map.on('click', onClick);
-    map.on('mousemove', onMove);
-    map.on('dblclick', onDblClick);
-    window.addEventListener('keydown', onKey);
-
-    return () => {
-      map.off('click', onClick);
-      map.off('mousemove', onMove);
-      map.off('dblclick', onDblClick);
-      window.removeEventListener('keydown', onKey);
-      drawApplyRef.current = null;
-      teardown();
-    };
-  }, [mapReady, drawMode]);
-
-  // Buttons dispatch into the same reducer the map events use, so a shape
-  // finished by clicking "Finish" is identical to one finished by Enter.
-  const lastCmdSeq = useRef(-1);
-  useEffect(() => {
-    if (!drawCommand || drawCommand.seq === lastCmdSeq.current) return;
-    lastCmdSeq.current = drawCommand.seq;
-    drawApplyRef.current?.({ type: drawCommand.action } as DrawAction);
-  }, [drawCommand]);
-
   // ── MAP CENTER REPORTING ──
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
@@ -3794,22 +3680,6 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
   return (
     <>
       <div ref={containerRef} className="absolute inset-0 w-full h-full" />
-      {mapReady && (
-        <LiveNewsPreviews
-          mapRef={mapRef}
-          active={!!activeLayers.live_news}
-          feeds={data.live_feeds}
-          onOpen={(feed: PreviewFeed) => onEntityClick?.({
-            type: 'live_news',
-            name: feed.name,
-            city: feed.city,
-            country: feed.country,
-            url: feed.url,
-            category: feed.category,
-            embed_allowed: true,
-          })}
-        />
-      )}
     </>
   );
 }

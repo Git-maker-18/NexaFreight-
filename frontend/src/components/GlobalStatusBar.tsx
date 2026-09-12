@@ -56,7 +56,7 @@ export default function GlobalStatusBar() {
             .slice(0, 5);
           setQuakes(majorQuakes);
         }
-      } catch (e) { console.warn('[OSIRIS] Suppressed error:', e instanceof Error ? e.message : e); }
+      } catch (e) { console.warn('[NexaFreight] Suppressed error:', e instanceof Error ? e.message : e); }
     };
     fetchData();
     const iv = setInterval(fetchData, 60000);
@@ -78,28 +78,10 @@ export default function GlobalStatusBar() {
         {/* Animated scan line */}
         <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-[var(--cyan-primary)]/30 to-transparent" style={{ animation: 'hud-scanline 4s linear infinite' }} />
         
-        {/* ── LEFT: Social & Community Links ── */}
+        {/* ── LEFT: Removed Social Links ── */}
         <div className="flex-shrink-0 h-full flex items-center pointer-events-auto">
-          {/* Discord — highlighted */}
-          <a href="https://discord.gg/EPaFD5FFKf" target="_blank" rel="noopener noreferrer"
-            className="h-full px-3 flex items-center gap-1.5 bg-[#5865F2]/10 hover:bg-[#5865F2]/25 border-r border-white/[0.04] transition-all duration-200 group"
-          >
-            <DiscordIcon />
-          </a>
-          {/* X / Twitter */}
-          <a href="https://x.com/soulsimplifai" target="_blank" rel="noopener noreferrer"
-            className="h-full px-2.5 flex items-center gap-1.5 text-white/40 hover:text-white hover:bg-white/[0.04] border-r border-white/[0.04] transition-all duration-200"
-          >
-            <XIcon />
-          </a>
-          {/* Documentation & API reference */}
-          <Link href="/docs" prefetch title="Documentation & API Reference" aria-label="Documentation & API Reference"
-            className="h-full px-3 flex items-center gap-1.5 bg-[var(--gold-primary)]/10 text-[var(--gold-primary)]/80 hover:text-[var(--gold-primary)] hover:bg-[var(--gold-primary)]/25 border-r border-white/[0.04] transition-all duration-200"
-          >
-            <DocsIcon />
-            <span className="text-[9px] font-bold tracking-[0.15em] uppercase">Docs</span>
-          </Link>
         </div>
+
 
         {/* ── CENTER: Scrolling ticker ── */}
         <div className="flex-1 overflow-hidden relative" style={{ maskImage: 'linear-gradient(to right, transparent, black 3%, black 97%, transparent)' }}>
