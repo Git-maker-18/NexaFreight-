@@ -1,11 +1,11 @@
 """SLA monitor worker (Definitive Plan — Phase 4 finish/Phase 8).
 
-Runs every 5 minutes via APScheduler:
+Runs every 15 minutes via APScheduler:
     run_sla_sweep → sla_checker.check_all_in_transit
         (rescores all in-transit orders, mirrors shipment DELAYED status,
          escalates stale CRITICAL alerts into the immutable audit trail).
 
-APScheduler: interval 5min, max_instances=1, coalesce=True.
+APScheduler: interval 15min, max_instances=1, coalesce=True.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from nexafreight.services.sla_checker import check_all_in_transit
 logger = logging.getLogger(__name__)
 
 JOB_ID = "nexafreight_sla_monitor"
-SCHEDULER_INTERVAL_MINUTES = 5
+SCHEDULER_INTERVAL_MINUTES = 15
 
 
 async def run_sla_sweep(session) -> dict:

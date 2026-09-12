@@ -167,6 +167,18 @@ async def test_remaining_definitive_flow(
     assert decision_row["route_version_after"] == 2
     assert decision_row["provenance"] == "DERIVED"
 
+    # --- 8.5 copilot can explain what just happened (plain-language trace) ---
+    res = await client.post(
+        "/api/copilot/ask",
+        json={"question": "Why was this shipment rerouted?", "shipment_id": shipment.id},
+        headers=headers,
+    )
+    assert res.status_code in (200, 201), res.text
+    copilot_body = res.json()
+    assert copilot_body["provenance"], "copilot response must carry provenance"
+    assert copilot_body["answer"], "copilot must return a non-empty answer"
+    assert copilot_body["source"] in ("rules", "llm", "rules_fallback")
+
     # --- 8. alert resolves; duplicate approve → 409 ---
     res = await client.post(
         f"/api/alerts/{alert_id}/approve",

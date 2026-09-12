@@ -1,7 +1,7 @@
 """Analytics endpoints (Definitive Plan — Phase 9).
 
-Scorecard (cross-window financials), summary (fleet counts), SLA risk
-board, and ESG rail. All provenance=DERIVED.
+Scorecard (cross-window financials), /financial (P&L breakdown alias),
+summary (fleet counts), SLA risk board, and ESG rail. All provenance=DERIVED.
 
 Scorecard windows are *cumulative deadline windows* (an order at deadline
 +12h appears in day, week AND month — that is how mornings roll up):
@@ -226,12 +226,8 @@ async def _build_aggregates(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/scorecard", response_model=AnalyticsFinancialResponse)
-async def scorecard(
-    session: AsyncSession = Depends(get_db_session),
-    _user: User = Depends(get_current_user),
-) -> AnalyticsFinancialResponse:
-    """Finance scorecard: day/week/month windows with rows per shipment."""
+async def _scorecard_payload(session: AsyncSession) -> AnalyticsFinancialResponse:
+    """Shared P&L breakdown builder for /scorecard and the /financial alias."""
     now = datetime.now(UTC)
     aggregates = await _build_aggregates(session, now=now)
 
@@ -269,6 +265,27 @@ async def scorecard(
     return AnalyticsFinancialResponse(
         day=day, week=week, month=month, rows=rows_out, provenance="DERIVED"
     )
+
+
+@router.get("/scorecard", response_model=AnalyticsFinancialResponse)
+async def scorecard(
+    session: AsyncSession = Depends(get_db_session),
+    _user: User = Depends(get_current_user),
+) -> AnalyticsFinancialResponse:
+    """Finance scorecard: day/week/month windows with rows per shipment."""
+    return await _scorecard_payload(session)
+
+
+@router.get("/financial", response_model=AnalyticsFinancialResponse)
+async def financial(
+    session: AsyncSession = Depends(get_db_session),
+    _user: User = Depends(get_current_user),
+) -> AnalyticsFinancialResponse:
+    """P&L breakdown (Definitive Plan §Phase 8 literal route name).
+
+    Same payload as /scorecard — both are the fleet financial rollup.
+    """
+    return await _scorecard_payload(session)
 
 
 @router.get("/summary", response_model=AnalyticsSummaryResponse)

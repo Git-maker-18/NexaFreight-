@@ -1,13 +1,14 @@
 """Disruption detector worker (Definitive Plan — Phase 8).
 
-Runs every 15 minutes via APScheduler (jobs themselves are importable and
-individually callable for tests):
-  1. Port congestion scan (daily index vs 90-day baseline).
-  2. Vessel delay scan (planned vs actual progress on live sea legs).
+Schedule per Definitive Plan §Phase 2:
+  1. Port congestion scan — APScheduler cron, daily at 06:00 UTC
+     (jobs themselves are importable and individually callable for tests).
+  2. Vessel delay scan — interval 15min (planned vs actual progress on live
+     sea legs; the AIS listener remains the real-time position source).
 Each candidate becomes a Disruption row; the alert pipeline
 (process_disruption) runs per candidate to raise alerts.
 
-APScheduler: interval 15min, max_instances=1, coalesce=True.
+Cron: hour=6 daily. max_instances=1, coalesce=True.
 """
 
 from __future__ import annotations
@@ -182,12 +183,12 @@ def register_jobs(scheduler, session_factory) -> None:
 
     scheduler.add_job(
         _run_congestion,
-        "interval",
-        minutes=SCHEDULER_INTERVAL_MINUTES,
+        "cron",
+        hour=6,  # plan: port congestion scan daily at 06:00
         id=f"{JOB_ID}_congestion",
         max_instances=1,
         coalesce=True,
-        misfire_grace_time=60,
+        misfire_grace_time=3600,
     )
     scheduler.add_job(
         _run_vessel_delay,
