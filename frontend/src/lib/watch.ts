@@ -26,7 +26,7 @@ export interface AoiReport {
 
 
 /**
- * OSIRIS — AOI tripwires
+ * NexaFreight — AOI tripwires
  *
  * Turns a repeated "what is inside" sweep into "what just changed". Draw a box
  * over an airfield and the panel stops being a measurement and starts being a

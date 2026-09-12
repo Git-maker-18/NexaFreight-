@@ -335,6 +335,19 @@ export type PortFeature = GeoJSON.Feature<GeoJSON.Point, PortFeatureProperties>
  */
 export type PortFeatureCollection = GeoJSON.FeatureCollection<GeoJSON.Point, PortFeatureProperties>
 
+/**
+ * Properties for a warehouse GeoJSON Point feature.
+ */
+export interface WarehouseFeatureProperties {
+  warehouse_id: string
+  name: string
+}
+
+/**
+ * GeoJSON FeatureCollection for warehouse markers.
+ */
+export type WarehouseFeatureCollection = GeoJSON.FeatureCollection<GeoJSON.Point, WarehouseFeatureProperties>
+
 // ─── Live Positions & Telemetry ───────────────────────────────────────────────
 
 /**

@@ -67,6 +67,7 @@ export {
   getShipmentDetail,
   getShipmentRoute,
   getPorts,
+  getWarehouses,
   getAllRoutes,
   getFeedHealth,
   getDelayPrediction,

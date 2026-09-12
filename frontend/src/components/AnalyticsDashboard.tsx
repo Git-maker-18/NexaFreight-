@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import ProvenanceBadge from './ProvenanceBadge';
+import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
 import {
   getAnalyticsEsg,
   getAnalyticsScorecard,
@@ -254,7 +255,28 @@ export default function AnalyticsDashboard({
               ))}
             </div>
 
+            
+            {/* Recharts Financial Graph */}
+            <div style={{ width: '100%', height: 250, marginBottom: 16 }}>
+              <ResponsiveContainer>
+                <BarChart data={scorecard.rows.slice(0, 15)} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                  <XAxis dataKey="shipment_id" tick={{ fill: '#94A3B8', fontSize: 10 }} tickFormatter={(val) => val.slice(0,6)} />
+                  <YAxis tick={{ fill: '#94A3B8', fontSize: 10 }} tickFormatter={(val) => `$${(val/1000).toFixed(0)}k`} />
+                  <RechartsTooltip 
+                    contentStyle={{ backgroundColor: 'rgba(15,23,42,0.9)', borderColor: 'rgba(148,163,184,0.3)', color: '#fff' }}
+                    itemStyle={{ fontSize: 12 }}
+                    formatter={(val: number) => fmtUsd(val)} 
+                  />
+                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 10 }} />
+                  <Bar dataKey="revenue_usd" name="Revenue" fill="#34D399" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="total_costs_usd" name="Total Costs" fill="#FCA5A5" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
             {/* P&L rail table */}
+
             <table
               style={{
                 width: '100%',

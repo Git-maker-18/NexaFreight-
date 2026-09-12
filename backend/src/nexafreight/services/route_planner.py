@@ -155,7 +155,14 @@ class RoutePlanner:
         air_func: Callable[..., AirRouteResult] = compute_air_route,
         handling_hours: float = HANDLING_HOURS,
     ) -> None:
-        self.road = road_router or RoadRouter(api_key=None)
+        if road_router is not None:
+            self.road = road_router
+        else:
+            from nexafreight.config import get_settings
+            settings = get_settings()
+            key = settings.ors_api_key.get_secret_value() if settings.ors_api_key else None
+            self.road = RoadRouter(api_key=key)
+            
         self.sea_func = sea_func
         self.air_func = air_func
         self.handling_hours = handling_hours

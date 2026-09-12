@@ -302,6 +302,15 @@ export async function getPorts(): Promise<PortFeatureCollection> {
 }
 
 /**
+ * GET /api/map/warehouses
+ *
+ * Returns all warehouse origins as a GeoJSON FeatureCollection of Point features.
+ */
+export async function getWarehouses(): Promise<WarehouseFeatureCollection> {
+  return apiFetch<WarehouseFeatureCollection>('/api/map/warehouses')
+}
+
+/**
  * GET /api/map/routes
  *
  * Returns all active shipment route geometries as a single GeoJSON FeatureCollection.
@@ -416,6 +425,7 @@ export const nexaClient = {
   getShipmentDetail,
   getShipmentRoute,
   getPorts,
+  getWarehouses,
   getAllRoutes,
   getFeedHealth,
   getDelayPrediction,

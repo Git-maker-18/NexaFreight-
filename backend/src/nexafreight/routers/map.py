@@ -134,6 +134,10 @@ _ports_cache: GeoJSONFeatureCollection | None = None
 _ports_cache_at: float = 0.0
 _ports_lock: asyncio.Lock = asyncio.Lock()
 
+_warehouses_cache: GeoJSONFeatureCollection | None = None
+_warehouses_cache_at: float = 0.0
+_warehouses_lock: asyncio.Lock = asyncio.Lock()
+
 
 def _cache_expired(refreshed_at: float) -> bool:
     """Return True if the cache timestamp is older than the TTL."""
@@ -156,6 +160,11 @@ def _invalidate_ports_cache() -> None:
     """Force immediate ports cache expiry."""
     global _ports_cache_at
     _ports_cache_at = 0.0
+
+
+def _invalidate_warehouses_cache() -> None:
+    global _warehouses_cache_at
+    _warehouses_cache_at = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -509,6 +518,70 @@ async def _get_ports_cached(
 
 
 # ---------------------------------------------------------------------------
+# Warehouses cache builder
+# ---------------------------------------------------------------------------
+
+
+async def _execute_warehouses_query(session: AsyncSession) -> GeoJSONFeatureCollection:
+    features: list[GeoJSONFeature] = []
+    stmt = (
+        select(Location.id, Location.latitude, Location.longitude, Location.name, Location.locode)
+        .join(Leg, Leg.origin_id == Location.id)
+        .where(Leg.transport_mode == "ROAD")
+        .distinct()
+    )
+    rows = (await session.execute(stmt)).all()
+
+    for row in rows:
+        if row.latitude is None or row.longitude is None:
+            continue
+        features.append(
+            GeoJSONFeature(
+                geometry={
+                    "type": "Point",
+                    "coordinates": [float(row.longitude), float(row.latitude)],
+                },
+                properties={
+                    "warehouse_id": str(row.id),
+                    "name": row.name or row.locode or "Warehouse",
+                },
+            )
+        )
+    return GeoJSONFeatureCollection(features=features)
+
+
+async def _build_warehouses_collection(
+    session: AsyncSession | None = None,
+) -> GeoJSONFeatureCollection:
+    try:
+        if session is not None:
+            return await _execute_warehouses_query(session)
+        session_factory = get_session_factory()
+        async with session_factory() as s:
+            return await _execute_warehouses_query(s)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to build warehouses FeatureCollection: %s", exc)
+        return GeoJSONFeatureCollection(features=[])
+
+
+async def _get_warehouses_cached(
+    session: AsyncSession | None = None,
+) -> GeoJSONFeatureCollection:
+    global _warehouses_cache, _warehouses_cache_at
+
+    if _warehouses_cache is not None and not _cache_expired(_warehouses_cache_at):
+        return _warehouses_cache
+
+    async with _warehouses_lock:
+        if _warehouses_cache is not None and not _cache_expired(_warehouses_cache_at):
+            return _warehouses_cache
+
+        _warehouses_cache = await _build_warehouses_collection(session=session)
+        _warehouses_cache_at = time.monotonic()
+        return _warehouses_cache
+
+
+# ---------------------------------------------------------------------------
 # SSE generator
 # ---------------------------------------------------------------------------
 
@@ -666,6 +739,23 @@ async def get_ports(
     Returns an empty FeatureCollection if no ports exist.
     """
     return await _get_ports_cached(session=db)
+
+
+@router.get(
+    "/warehouses",
+    summary="Get warehouse locations",
+    response_description="GeoJSON FeatureCollection of warehouse origins",
+    response_model=GeoJSONFeatureCollection,
+)
+async def get_warehouses(
+    session: AsyncSession = Depends(get_db_session),
+    _current_user: Any = Depends(get_current_user),
+) -> GeoJSONFeatureCollection:
+    """
+    Return all warehouse locations as a GeoJSON FeatureCollection.
+    Warehouses are defined as the origin locations of ROAD legs.
+    """
+    return await _get_warehouses_cached(session=session)
 
 
 @router.get(

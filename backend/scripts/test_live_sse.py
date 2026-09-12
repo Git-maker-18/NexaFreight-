@@ -5,13 +5,25 @@ from __future__ import annotations
 import json
 import urllib.request
 
-req = urllib.request.Request(
-    "http://localhost:8000/api/auth/login",
-    data=json.dumps({"email": "operator@nexafreight.dev", "password": "changeme123"}).encode("utf-8"),
-    headers={"Content-Type": "application/json"},
-)
-resp = urllib.request.urlopen(req)
-token = json.loads(resp.read().decode("utf-8"))["access_token"]
+token = None
+for cred in [
+    {"email": "operator@nexafreight.local", "password": "operator123"},
+    {"email": "operator@nexafreight.dev", "password": "changeme123"},
+]:
+    try:
+        req = urllib.request.Request(
+            "http://localhost:8000/api/auth/login",
+            data=json.dumps(cred).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        resp = urllib.request.urlopen(req)
+        token = json.loads(resp.read().decode("utf-8"))["access_token"]
+        break
+    except Exception:
+        continue
+
+if not token:
+    raise RuntimeError("Login failed with seed credentials. Ensure backend is running and seeded.")
 
 req_sse = urllib.request.Request(
     "http://localhost:8000/api/map/positions/stream",

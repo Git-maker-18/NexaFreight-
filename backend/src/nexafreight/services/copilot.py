@@ -195,19 +195,39 @@ async def answer_shipment_question(
 
     if needs_llm(question):
         source = "rules_fallback"  # assume fallback until the LLM answers
-        if adapter is None:
-            from nexafreight.adapters.llm.gemini import GeminiAdapter
 
-            adapter = GeminiAdapter()
+        if adapter is None:
+            # Build adapter chain from Settings so config values are respected.
+            from nexafreight.adapters.llm.gemini import GeminiAdapter
+            from nexafreight.adapters.llm.ollama import OllamaAdapter
+            from nexafreight.config import get_settings
+
+            _settings = get_settings()
+            _gemini_key = (
+                _settings.gemini_api_key.get_secret_value()
+                if _settings.gemini_api_key
+                else None
+            )
+            gemini = GeminiAdapter(
+                model_name=_settings.gemini_model,
+                api_key=_gemini_key,
+            )
+            ollama = OllamaAdapter(
+                base_url=_settings.ollama_base_url,
+                model=_settings.ollama_model,
+            )
+            # Prefer Gemini; fall through to Ollama if unavailable.
+            adapter = gemini if gemini.available else ollama
+
+        prompt = (
+            "You are the NexaFreight shipment copilot. Answer the operator's "
+            "question using only the context below.\n\n"
+            f"CONTEXT (JSON):\n{context}\n\n"
+            f"QUESTION: {question}\n\n"
+            "Answer in 3 short paragraphs or fewer, concrete and financial."
+        )
 
         if getattr(adapter, "available", False):
-            prompt = (
-                "You are the NexaFreight shipment copilot. Answer the operator's "
-                "question using only the context below.\n\n"
-                f"CONTEXT (JSON):\n{context}\n\n"
-                f"QUESTION: {question}\n\n"
-                "Answer in 3 short paragraphs or fewer, concrete and financial."
-            )
             answer = await adapter.complete(prompt)
             if answer:
                 source = "llm"
@@ -220,7 +240,8 @@ async def answer_shipment_question(
                 )
                 await session.commit()
                 return {"answer": answer, "source": source, "provenance": "DERIVED"}
-        # Fall back to a rule answer (document the fallback in audit trail).
+
+        # All LLM adapters failed or unavailable — fall back to rule answer.
         answer = _rules_answer(shipment)
         _record_llm_audit(
             session,
@@ -228,7 +249,7 @@ async def answer_shipment_question(
             question=question,
             answer=answer,
             user=user,
-            note="llm_unavailable_fallback" if not getattr(adapter, "available", False) else "llm_error_fallback",
+            note="all_llm_unavailable_fallback",
         )
         await session.commit()
         return {"answer": answer, "source": source, "provenance": "DERIVED"}
