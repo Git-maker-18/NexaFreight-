@@ -446,6 +446,7 @@ import type {
   AnalyticsSummaryResponse,
   ApproveResponse,
   CopilotAskResponse,
+  WarehouseFeatureCollection,
   Decision,
   DecisionsResponse,
   Disruption,

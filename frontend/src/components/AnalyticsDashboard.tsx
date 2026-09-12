@@ -266,7 +266,7 @@ export default function AnalyticsDashboard({
                   <RechartsTooltip 
                     contentStyle={{ backgroundColor: 'rgba(15,23,42,0.9)', borderColor: 'rgba(148,163,184,0.3)', color: '#fff' }}
                     itemStyle={{ fontSize: 12 }}
-                    formatter={(val: number) => fmtUsd(val)} 
+                    formatter={(val: any) => fmtUsd(val)} 
                   />
                   <Legend wrapperStyle={{ fontSize: 12, paddingTop: 10 }} />
                   <Bar dataKey="revenue_usd" name="Revenue" fill="#34D399" radius={[4, 4, 0, 0]} />

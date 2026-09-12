@@ -1544,7 +1544,6 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
       // ── Fetch & Populate NexaFreight Routes (Step 5) ──
       const loadWarehouses = () => {
       getWarehouses().then(resp => {
-        if (cancelled) return;
         const src = map.getSource('warehouses') as maplibregl.GeoJSONSource | undefined;
         if (src && resp?.type === 'FeatureCollection') {
           src.setData(resp as never);
@@ -1553,6 +1552,7 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
         console.warn('[NexaFreight] Failed to load warehouses:', err);
       });
     };
+    loadWarehouses();
 
     const loadRoutes = async () => {
         try {
