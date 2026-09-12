@@ -422,3 +422,205 @@ export const nexaClient = {
   getEtaPrediction,
   getDemandForecast,
 } as const
+
+// ─── Operational APIs (Definitive Plan — Phase 10) ────────────────────────────
+
+import type {
+  AcknowledgeRequest,
+  Alert,
+  AlertDetail,
+  AlertsResponse,
+  AnalyticsEsgResponse,
+  AnalyticsFinancialResponse,
+  AnalyticsSlaResponse,
+  AnalyticsSummaryResponse,
+  ApproveResponse,
+  CopilotAskResponse,
+  Decision,
+  DecisionsResponse,
+  Disruption,
+  DisruptionCreate,
+  DisruptionsResponse,
+  RerouteOptionsResponse,
+  ShipmentFinancialsResponse,
+  ShipmentPredictResponse,
+} from './types'
+
+// ─── Alerts ───────────────────────────────────────────────────────────────────
+
+/** GET /api/alerts?severity=&status= */
+export async function getAlerts(params?: {
+  severity?: string
+  status?: string
+}): Promise<AlertsResponse> {
+  const qs = new URLSearchParams()
+  if (params?.severity) qs.set('severity', params.severity)
+  if (params?.status) qs.set('status', params.status)
+  const suffix = qs.size ? `?${qs}` : ''
+  return apiFetch<AlertsResponse>(`/api/alerts${suffix}`, { method: 'GET' })
+}
+
+/** GET /api/alerts/{id} */
+export async function getAlert(id: string): Promise<AlertDetail> {
+  return apiFetch<AlertDetail>(`/api/alerts/${encodeURIComponent(id)}`, { method: 'GET' })
+}
+
+/** PATCH /api/alerts/{id}/acknowledge */
+export async function acknowledgeAlert(
+  id: string,
+  req: AcknowledgeRequest = { user_id: 1 },
+): Promise<Alert> {
+  return apiFetch<Alert>(`/api/alerts/${encodeURIComponent(id)}/acknowledge`, {
+    method: 'PATCH',
+    body: req,
+  })
+}
+
+/** GET /api/alerts/{id}/options */
+export async function getAlertOptions(id: string): Promise<RerouteOptionsResponse> {
+  return apiFetch<RerouteOptionsResponse>(
+    `/api/alerts/${encodeURIComponent(id)}/options`,
+    { method: 'GET' },
+  )
+}
+
+/** POST /api/alerts/{id}/approve */
+export async function approveAlertOption(
+  id: string,
+  optionKey: string,
+): Promise<ApproveResponse> {
+  return apiFetch<ApproveResponse>(`/api/alerts/${encodeURIComponent(id)}/approve`, {
+    method: 'POST',
+    body: { option_key: optionKey },
+  })
+}
+
+// ─── Disruptions ──────────────────────────────────────────────────────────────
+
+/** GET /api/disruptions?status=&disruption_type= */
+export async function getDisruptions(params?: {
+  status?: string
+  disruption_type?: string
+}): Promise<DisruptionsResponse> {
+  const qs = new URLSearchParams()
+  if (params?.status) qs.set('status', params.status)
+  if (params?.disruption_type) qs.set('disruption_type', params.disruption_type)
+  const suffix = qs.size ? `?${qs}` : ''
+  return apiFetch<DisruptionsResponse>(`/api/disruptions${suffix}`, { method: 'GET' })
+}
+
+/** GET /api/disruptions/{id} */
+export async function getDisruption(id: string): Promise<Disruption> {
+  return apiFetch<Disruption>(`/api/disruptions/${encodeURIComponent(id)}`, { method: 'GET' })
+}
+
+/**
+ * POST /api/disruptions — manual operator report; the MLIT pipeline analyzes
+ * it immediately and raises the alert.
+ */
+export async function reportDisruption(
+  req: DisruptionCreate,
+): Promise<{ disruption_id: string; severity: string | null; alert_id: string | null; provenance: string }> {
+  return apiFetch(`/api/disruptions`, {
+    method: 'POST',
+    body: req,
+  })
+}
+
+// ─── Decisions ────────────────────────────────────────────────────────────────
+
+/** GET /api/decisions (admin/operator only) */
+export async function getDecisions(): Promise<DecisionsResponse> {
+  return apiFetch<DecisionsResponse>(`/api/decisions`, { method: 'GET' })
+}
+
+/** GET /api/decisions/{id} */
+export async function getDecision(id: string): Promise<Decision> {
+  return apiFetch<Decision>(`/api/decisions/${encodeURIComponent(id)}`, { method: 'GET' })
+}
+
+// ─── Analytics ───────────────────────────────────────────────────────────────
+
+/** GET /api/analytics/summary */
+export async function getAnalyticsSummary(): Promise<AnalyticsSummaryResponse> {
+  return apiFetch<AnalyticsSummaryResponse>(`/api/analytics/summary`, { method: 'GET' })
+}
+
+/** GET /api/analytics/scorecard — finance rollups (day ⊂ week ⊂ month) */
+export async function getAnalyticsScorecard(): Promise<AnalyticsFinancialResponse> {
+  return apiFetch<AnalyticsFinancialResponse>(`/api/analytics/scorecard`, { method: 'GET' })
+}
+
+/** GET /api/analytics/sla — per-shipment SLA risk board */
+export async function getAnalyticsSla(): Promise<AnalyticsSlaResponse> {
+  return apiFetch<AnalyticsSlaResponse>(`/api/analytics/sla`, { method: 'GET' })
+}
+
+/** GET /api/analytics/esg — CO2 rail with vs-air comparisons */
+export async function getAnalyticsEsg(): Promise<AnalyticsEsgResponse> {
+  return apiFetch<AnalyticsEsgResponse>(`/api/analytics/esg`, { method: 'GET' })
+}
+
+// ─── AI Copilot ──────────────────────────────────────────────────────────────
+
+/** POST /api/copilot/ask — Gemini with deterministic rules fallback */
+export async function askCopilot(
+  shipmentId: string,
+  question: string,
+): Promise<CopilotAskResponse> {
+  return apiFetch<CopilotAskResponse>(`/api/copilot/ask`, {
+    method: 'POST',
+    body: { shipment_id: shipmentId, question },
+  })
+}
+
+// ─── Shipment predict + financials ───────────────────────────────────────────
+
+/**
+ * GET /api/shipments/{id}/predict. Returns null when the model registry
+ * is offline or the shipment is unknown (404/503) — the inspector panel
+ * simply skips the section, it doesn't light up an error banner.
+ */
+export async function getShipmentPrediction(id: string): Promise<ShipmentPredictResponse | null> {
+  try {
+    return await apiFetch<ShipmentPredictResponse>(
+      `/api/shipments/${encodeURIComponent(id)}/predict`,
+      { method: 'GET' },
+    )
+  } catch (err) {
+    if (err instanceof NexaHttpError && (err.status === 404 || err.status === 503)) {
+      return null
+    }
+    throw err
+  }
+}
+
+/** GET /api/shipments/{id}/financials (403 → caller hides the tab for viewer roles) */
+export async function getShipmentFinancials(id: string): Promise<ShipmentFinancialsResponse> {
+  return apiFetch<ShipmentFinancialsResponse>(
+    `/api/shipments/${encodeURIComponent(id)}/financials`,
+    { method: 'GET' },
+  )
+}
+
+// Register the new methods in the convenience namespace (keeps existing callers
+// that import individual functions untouched — same shorthand resolves here).
+Object.assign(nexaClient, {
+  getAlerts,
+  getAlert,
+  acknowledgeAlert,
+  getAlertOptions,
+  approveAlertOption,
+  getDisruptions,
+  getDisruption,
+  reportDisruption,
+  getDecisions,
+  getDecision,
+  getAnalyticsSummary,
+  getAnalyticsScorecard,
+  getAnalyticsSla,
+  getAnalyticsEsg,
+  askCopilot,
+  getShipmentPrediction,
+  getShipmentFinancials,
+})
