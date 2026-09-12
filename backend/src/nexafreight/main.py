@@ -115,6 +115,41 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "prediction endpoints will remain unavailable"
         )
 
+    # Definitive Plan Phase 8: disruption detector + SLA monitor workers.
+    # Started only when their feature flags are enabled; halted on shutdown.
+    app.state.operational_scheduler = None
+    if settings.enable_disruption_detector or settings.enable_sla_checker:
+        try:
+            from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+            from nexafreight.database import get_session_factory
+            from nexafreight.workers import (
+                disruption_detector as disruption_detector_worker,
+            )
+            from nexafreight.workers import (
+                sla_monitor as sla_monitor_worker,
+            )
+
+            scheduler = AsyncIOScheduler()
+            session_factory = get_session_factory()
+            if settings.enable_disruption_detector:
+                disruption_detector_worker.register_jobs(scheduler, session_factory)
+            if settings.enable_sla_checker:
+                sla_monitor_worker.register_jobs(scheduler, session_factory)
+            scheduler.start()
+            app.state.operational_scheduler = scheduler
+            logger.info(
+                "Operational scheduler started (disruption_detector=%s, sla_monitor=%s)",
+                settings.enable_disruption_detector,
+                settings.enable_sla_checker,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to start operational scheduler: %s — continuing without workers",
+                exc,
+                exc_info=True,
+            )
+
     logger.info("Application startup complete")
 
     # Yield control during application runtime
@@ -122,6 +157,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown
     logger.info("Shutting down NexaFreight Control Tower")
+
+    # Stop Definitive Plan operational workers (disruption detector / SLA monitor)
+    try:
+        scheduler = getattr(app.state, "operational_scheduler", None)
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
+            logger.info("Operational scheduler shut down.")
+    except Exception as exc:
+        logger.warning(f"Error during operational scheduler shutdown: {exc}")
 
     # Stop position interpolator worker (T-030 cleanup).
     try:
