@@ -50,3 +50,6 @@ archive/scratch_*.txt
 
 data/
 *.db
+
+# Local backend env files with dev secrets
+backend/.env
