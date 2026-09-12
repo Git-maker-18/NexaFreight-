@@ -88,3 +88,17 @@ class InvalidTokenError(AuthenticationError):
 
     def __init__(self) -> None:
         super().__init__(message="Invalid authentication token")
+
+
+class ConflictError(ValidationError):
+    """State conflict — the request is valid but violates a uniqueness/
+    idempotency constraint (e.g. approving a decision twice).
+
+    Subclasses ValidationError so handlers built for 422-style re-validation
+    contract stay compatible; overrides the status to HTTP 409 Conflict
+    (Definitive Plan — decision approve exactly-once semantics).
+    """
+
+    def __init__(self, message: str) -> None:
+        ValidationError.__init__(self, message=message)
+        self.status_code = 409

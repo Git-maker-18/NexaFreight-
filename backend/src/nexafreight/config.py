@@ -59,6 +59,14 @@ class Settings(BaseSettings):
         default=True,
         description="Use live AIS (AISStreamAdapter) vs replay (ReplayFeedAdapter)",
     )
+    enable_disruption_detector: bool = Field(
+        default=True,
+        description="Enable/disable the background disruption detector worker (every 15 min)",
+    )
+    enable_sla_checker: bool = Field(
+        default=True,
+        description="Enable/disable the background SLA checker worker (every 5 min)",
+    )
 
     ais_replay_data_path: str | None = Field(
         default=None,

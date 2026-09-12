@@ -1,13 +1,71 @@
 """Financial impact calculations for shipment routing decisions.
 
 Pure functions with no I/O, database access, or side effects — fully
-deterministic and unit-testable. Used by rerouting decision logic
-(T-054) and financial analytics (T-068a).
+deterministic and unit-testable. Used by the alert engine, reroute
+engine, SLA checker (Definitive Plan Phases 1-6), and the shipment
+financials endpoint.
+
+Rates & caps (documented, conservative):
+- SLA penalty: 5% of order revenue per day late, capped at 10% of revenue
+- Demurrage: 4 free days, then $150/container/day; after 7 billable
+  days the rate doubles (tier-2 steepening)
+- Freight: per-mode $/tonne-km nominal rates (SEA 0.02, AIR 1.8,
+  ROAD 0.06, RAIL 0.03)
+- CO2: per-mode g/tonne-km emission factors (SEA 6.5, AIR 500,
+  ROAD 62, RAIL 22) priced at $0.08/kg
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from nexafreight.enums import TransportMode
+
+# ---------------------------------------------------------------------------
+# Rate constants
+# ---------------------------------------------------------------------------
+
+#: SLA penalty rate per day late (fraction of order revenue).
+SLA_PENALTY_PCT_PER_DAY: float = 0.05
+
+#: SLA penalty hard cap as a fraction of order revenue.
+SLA_PENALTY_CAP_PCT: float = 0.10
+
+#: Free demurrage days before charges start.
+DEMURRAGE_FREE_DAYS: int = 4
+
+#: Demurrage charge per container-day, tier 1 (days 1-7 after free period).
+DEMURRAGE_DAILY_RATE: float = 150.0
+
+#: Billable days at tier 1 before the rate doubles.
+DEMURRAGE_TIER1_DAYS: int = 7
+
+#: Tier-2 rate multiplier applied beyond tier 1.
+DEMURRAGE_TIER2_MULTIPLIER: float = 2.0
+
+#: Nominal freight rates, USD per tonne-km, by transport mode.
+FREIGHT_RATE_PER_T_KM: dict[str, float] = {
+    "SEA": 0.02,
+    "AIR": 1.8,
+    "ROAD": 0.06,
+    "RAIL": 0.03,
+}
+
+#: CO2 emission factors, grams per tonne-km, by transport mode.
+CO2_G_PER_T_KM: dict[str, float] = {
+    "SEA": 6.5,
+    "AIR": 500.0,
+    "ROAD": 62.0,
+    "RAIL": 22.0,
+}
+
+#: Carbon price — USD per kg CO2.
+CARBON_COST_PER_KG: float = 0.08
+
+
+# ---------------------------------------------------------------------------
+# Dataclasses
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -41,73 +99,146 @@ class ShipmentFinancialImpact:
     total_impact_usd: float
 
 
-def calculate_sla_penalty(revenue: float, penalty_pct: float, days_late: int) -> float:
+@dataclass(frozen=True)
+class PnLSnapshot:
+    """Profit-and-loss snapshot for one shipment.
+
+    Deliberately a plain value object: the caller supplies the components
+    and everything else is derived here so there is exactly one place the
+    arithmetic lives.
+    """
+
+    revenue_usd: float
+    shipping_cost_usd: float
+    sla_penalty_usd: float
+    demurrage_usd: float
+    freight_cost_usd: float
+    carbon_cost_usd: float
+    total_costs_usd: float
+    margin_usd: float
+    margin_pct: float | None
+    warnings: list[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# SLA penalty
+# ---------------------------------------------------------------------------
+
+
+def calculate_sla_penalty(
+    revenue: float,
+    penalty_pct: float,
+    days_late: int,
+    *,
+    cap_pct: float = SLA_PENALTY_CAP_PCT,
+) -> float:
     """Calculate SLA penalty for late delivery.
 
     Args:
         revenue: Order revenue (USD)
         penalty_pct: Penalty percentage per day late (e.g., 0.05 for 5%)
-        days_late: Number of days past SLA deadline (negative or zero = no penalty)
+        days_late: Days past SLA deadline (negative or zero = no penalty)
+        cap_pct: Hard cap on the penalty as a fraction of revenue
+                 (Definitive Plan Phase 1 — capped at 10%)
 
     Returns:
-        Penalty amount in USD (0.0 if not late)
+        Penalty amount in USD (0.0 if not late).
 
     Formula:
-        If days_late > 0: revenue * penalty_pct * days_late
-        Otherwise: 0.0
+        min(revenue * penalty_pct * days_late, revenue * cap_pct)
     """
     if days_late <= 0:
         return 0.0
-    return revenue * penalty_pct * days_late
+    uncapped = revenue * penalty_pct * days_late
+    cap = revenue * cap_pct
+    return min(uncapped, cap)
 
 
-def calculate_demurrage(extra_days: int, free_days: int, daily_rate: float) -> float:
-    """Calculate demurrage charges for container detention.
+# ---------------------------------------------------------------------------
+# Demurrage
+# ---------------------------------------------------------------------------
+
+
+def calculate_demurrage(
+    extra_days: int,
+    free_days: int,
+    daily_rate: float,
+    *,
+    tier1_days: int = DEMURRAGE_TIER1_DAYS,
+    tier2_multiplier: float = DEMURRAGE_TIER2_MULTIPLIER,
+) -> float:
+    """Calculate tiered demurrage charges for container detention.
 
     Args:
-        extra_days: Total days container held beyond planned delivery
-        free_days: Number of free days before demurrage starts
-        daily_rate: Cost per day after free days (USD)
+        extra_days: Total days the container is held beyond planned delivery
+        free_days: Free days before demurrage starts
+        daily_rate: Tier-1 cost per billable day (USD)
+        tier1_days: Billable days charged at the tier-1 rate
+        tier2_multiplier: Tier-2 rate multiplier beyond tier 1
 
     Returns:
-        Demurrage cost in USD (0.0 if within free days)
+        Demurrage cost in USD, always >= 0.
 
     Formula:
-        If extra_days > free_days: (extra_days - free_days) * daily_rate
-        Otherwise: 0.0
-
-    Note:
-        Result is always >= 0.0 (clamped if inputs would produce negative).
+        billable = extra_days - free_days
+        tier1 = min(billable, tier1_days) * daily_rate
+        tier2 = max(0, billable - tier1_days) * daily_rate * tier2_multiplier
     """
     if extra_days <= free_days:
         return 0.0
+    billable = extra_days - free_days
+    tier1 = min(billable, tier1_days) * daily_rate
+    tier2 = max(0, billable - tier1_days) * daily_rate * tier2_multiplier
+    return max(0.0, tier1 + tier2)
 
-    billable_days = extra_days - free_days
-    cost = billable_days * daily_rate
 
-    return max(0.0, cost)  # Never negative
+# ---------------------------------------------------------------------------
+# Freight & carbon
+# ---------------------------------------------------------------------------
 
 
-def calculate_carbon_cost(co2_delta_kg: float, cost_per_kg: float = 0.08) -> float:
-    """Calculate carbon cost/savings for route change.
+def calculate_freight_cost(
+    distance_km: float,
+    weight_tonnes: float,
+    mode: str | TransportMode,
+) -> float:
+    """Nominal carrier freight cost for one leg.
 
-    Args:
-        co2_delta_kg: Change in CO2 emissions (kg).
-                     Positive = increase (cost)
-                     Negative = decrease (savings, represented as negative cost)
-        cost_per_kg: Carbon cost per kg CO2 (default $0.08/kg)
+    rate($/t-km) x distance(km) x weight(t). The rates are documented
+    assumptions (see module docstring) — good enough to rank options,
+    not a quote engine.
+    """
+    rate = FREIGHT_RATE_PER_T_KM.get(str(mode), FREIGHT_RATE_PER_T_KM["SEA"])
+    return rate * distance_km * weight_tonnes
 
-    Returns:
-        Carbon cost in USD. Positive = cost, negative = savings.
 
-    Design decision:
-        Negative CO2 delta (improvement) is allowed and returns negative cost
-        (representing savings). This enables accurate net impact calculation
-        when comparing routes — e.g., air freight may have higher CO2 cost
-        but faster delivery may avoid SLA penalties, and the net comparison
-        requires both costs and savings to be properly signed.
+def calculate_co2_kg(
+    distance_km: float,
+    weight_tonnes: float,
+    mode: str | TransportMode,
+) -> float:
+    """CO2 emissions in kg for one leg (g/t-km factor × km × t ÷ 1000)."""
+    factor = CO2_G_PER_T_KM.get(str(mode), CO2_G_PER_T_KM["SEA"])
+    return factor * distance_km * weight_tonnes / 1000.0
+
+
+def calculate_co2_cost(co2_kg: float) -> float:
+    """Carbon cost (or savings when negative) at $0.08/kg."""
+    return co2_kg * CARBON_COST_PER_KG
+
+
+def calculate_carbon_cost(co2_delta_kg: float, cost_per_kg: float = CARBON_COST_PER_KG) -> float:
+    """Backward-compatible alias: price a CO2 *delta*.
+
+    Negative deltas (improvement) return a negative cost — kept so net
+    impact comparisons across options stay properly signed.
     """
     return co2_delta_kg * cost_per_kg
+
+
+# ---------------------------------------------------------------------------
+# Order / shipment impact
+# ---------------------------------------------------------------------------
 
 
 def calculate_order_financial_impact(order_input: OrderFinancialInput) -> OrderFinancialImpact:
@@ -164,3 +295,86 @@ def calculate_shipment_financial_impact(
         per_order_impacts=per_order_impacts,
         total_impact_usd=total,
     )
+
+
+# ---------------------------------------------------------------------------
+# P&L snapshot
+# ---------------------------------------------------------------------------
+
+
+def generate_pnl_snapshot(
+    *,
+    revenue_usd: float,
+    shipping_cost_usd: float,
+    sla_penalty_usd: float,
+    demurrage_usd: float,
+    freight_cost_usd: float,
+    carbon_cost_usd: float,
+) -> PnLSnapshot:
+    """Profit-and-loss snapshot for a shipment.
+
+    total_costs = shipping + freight + carbon + sla penalties + demurrage
+    margin      = revenue - total_costs
+    margin_pct  = margin / revenue (None when revenue <= 0)
+    """
+    warnings: list[str] = []
+
+    total_costs = (
+        shipping_cost_usd + freight_cost_usd + carbon_cost_usd + sla_penalty_usd + demurrage_usd
+    )
+    if carbon_cost_usd < 0:
+        warnings.append("Carbon savings applied (negative carbon cost).")
+    if sla_penalty_usd > 0 or demurrage_usd > 0:
+        warnings.append("Projected penalties/demurrage included in costs.")
+
+    margin = revenue_usd - total_costs
+    margin_pct = margin / revenue_usd if revenue_usd > 0 else None
+
+    if total_costs == 0:
+        warnings.append("No cost inputs supplied.")
+    if revenue_usd <= 0:
+        warnings.append("No revenue recorded for this shipment.")
+    if margin < 0:
+        warnings.append("Do not ship: negative margin under current costs.")
+
+    return PnLSnapshot(
+        revenue_usd=revenue_usd,
+        shipping_cost_usd=shipping_cost_usd,
+        sla_penalty_usd=sla_penalty_usd,
+        demurrage_usd=demurrage_usd,
+        freight_cost_usd=freight_cost_usd,
+        carbon_cost_usd=carbon_cost_usd,
+        total_costs_usd=total_costs,
+        margin_usd=margin,
+        margin_pct=margin_pct,
+        warnings=warnings,
+    )
+
+
+def assess_order_margin(
+    *,
+    revenue_usd: float,
+    shipping_cost_usd: float,
+    sla_penalty_usd: float,
+    demurrage_usd: float,
+    freight_cost_usd: float,
+    carbon_cost_usd: float,
+    min_margin_pct: float = 0.15,
+) -> str:
+    """GO / CAUTION / NO-GO margin assessment for a single order."""
+    pnl = generate_pnl_snapshot(
+        revenue_usd=revenue_usd,
+        shipping_cost_usd=shipping_cost_usd,
+        sla_penalty_usd=sla_penalty_usd,
+        demurrage_usd=demurrage_usd,
+        freight_cost_usd=freight_cost_usd,
+        carbon_cost_usd=carbon_cost_usd,
+    )
+    if pnl.margin_pct is not None and pnl.margin_pct >= min_margin_pct:
+        return f"GO: margin {pnl.margin_pct:.1%} meets target {min_margin_pct:.0%}."
+    if pnl.margin_usd >= 0:
+        return (
+            f"CAUTION: margin {(pnl.margin_pct or 0.0):.1%} below target {min_margin_pct:.0%}; "
+            "review consolidation options."
+        )
+    return f"NO-GO: negative margin ({pnl.margin_usd:,.0f} USD)."
