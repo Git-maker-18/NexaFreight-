@@ -1,13 +1,31 @@
-import { buildGeometry, closeRing, drawReducer, initialDrawState, measure, type DrawAction, type DrawMode, type DrawProgress, type DrawResult, type DrawState } from '@/lib/draw';
 'use client';
 
 import { useEffect, useRef, useState, useCallback, memo } from 'react';
 import maplibregl from 'maplibre-gl';
 
-import { MAP_DEFAULTS, MAP_PALETTE_KEYS, readMapPalette, satColorFor, type MapPalette } from '@/lib/map-palette';
-import { STYLE_EVENT } from '@/lib/style-tokens';
-import { arrivalBeacons } from '@/lib/malware-intel';
-import LiveNewsPreviews, { type PreviewFeed } from '@/components/LiveNewsPreviews';
+
+/* Map pigment constants — were lib/map-palette.ts before Phase 0 removed it.
+ * Values mirror the `--map-*` custom properties in globals.css; the palette is
+ * read once statically now that Style Studio's map section is gone (Definitive
+ * Plan Phase 0: "map color palette — not needed"). */
+interface MapPalette {
+  cctv: string;
+  flightCivil: string;
+  flightPrivate: string;
+  flightGov: string;
+  flightMilitary: string;
+  flightUnknown: string;
+}
+const MAP_DEFAULTS: MapPalette = {
+  cctv: '#00e676',
+  flightCivil: '#00e5ff',
+  flightPrivate: '#ffd700',
+  flightGov: '#ff9500',
+  flightMilitary: '#ff0000',
+  flightUnknown: '#546e7a',
+};
+
+
 import { getPorts, getAllRoutes, getShipmentDetail, type PositionReport } from '@/lib/nexafreight';
 import { useSSEPositions } from '@/hooks/useSSEPositions';
 import { getProvenanceBadgeHtml } from '@/components/ProvenanceBadge';
@@ -41,16 +59,6 @@ interface GlobeMapProps {
   theme?: 'core' | 'ghost';
   drawnPolygons?: Array<{ id: string; name: string; geojson: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.LineString>; color: string }>;
   arcgisLayers?: Array<{ id: string; title: string; geojson: any; color?: string; opacity?: number }>;
-  /** Active draw mode, or null when not drawing. */
-  drawMode?: DrawMode | null;
-  onDrawProgress?: (p: DrawProgress | null) => void;
-  onDrawCancel?: () => void;
-  /**
-   * Undo / finish / cancel driven from a button rather than the keyboard.
-   * Carries a seq so pressing the same button twice still registers.
-   */
-  drawCommand?: { action: DrawAction["type"]; seq: number } | null;
-  onDrawComplete?: (result: DrawResult) => void;
   onMapCenter?: (coords: { lat: number; lng: number; bounds?: { west: number; south: number; east: number; north: number } }) => void;
   /** Active turn-by-turn route drawn as a line with origin/destination pins. */
   route?: {
@@ -299,7 +307,7 @@ interface LiveMarkerRecord {
   latestPos?: PositionReport;
 }
 
-function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightClick, onViewStateChange, flyToLocation, projection = 'globe', mapStyle = 'dark', sweepData, scanTargets = [], demoMode = false, theme = 'core', drawnPolygons = [], arcgisLayers = [], drawMode = null, onDrawComplete, onDrawProgress, onDrawCancel, drawCommand = null, onMapCenter, route = null, userLocation = null, followUser = false, onFollowInterrupt, navigating = false, aircraftAirports = {} }: GlobeMapProps) {
+function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightClick, onViewStateChange, flyToLocation, projection = 'globe', mapStyle = 'dark', sweepData, scanTargets = [], demoMode = false, theme = 'core', drawnPolygons = [], arcgisLayers = [], onMapCenter, route = null, userLocation = null, followUser = false, onFollowInterrupt, navigating = false, aircraftAirports = {} }: GlobeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
@@ -310,14 +318,12 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
    * the recolour effects; held in a ref as well for the click handlers, which
    * are registered once on load and would otherwise close over the first value.
    */
-  const [palette, setPalette] = useState<MapPalette>(MAP_DEFAULTS);
+  const palette: MapPalette = MAP_DEFAULTS;
   const paletteRef = useRef(palette);
-  useEffect(() => { paletteRef.current = palette; }, [palette]);
   const prevStyleRef = useRef(mapStyle);
   const prevDrawnPolygonsRef = useRef<string[]>([]);
   const prevArcgisLayersRef = useRef<string[]>([]);
 
-  const drawingCoordsRef = useRef<number[][]>([]);
 
   // ── NexaFreight Route & Live Marker Lookups (Step 4) ──
   const legToShipmentRef = useRef<Map<string, { shipmentId: string; mode: string }>>(new Map());
@@ -762,7 +768,7 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
          is what let the two drift: the effect's ghost palette was four
          distinct violets, this block's was one, and whichever ran last won. */
       const bootStyle = getComputedStyle(document.body);
-      const boot = readMapPalette(name => bootStyle.getPropertyValue(name));
+      const boot = MAP_DEFAULTS;
       const cameraColor = boot.cctv;
       const flightCom = boot.flightCivil;
       const flightPriv = boot.flightPrivate;
@@ -2197,29 +2203,6 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
     setGeo('military', activeLayers.military ? toFeatures(data.military_flights) : []);
   }, [mapReady, data.commercial_flights, data.private_flights, data.private_jets, data.military_flights, activeLayers.flights, activeLayers.private, activeLayers.jets, activeLayers.military]);
 
-  /**
-   * Pull the palette out of the document whenever it can have changed.
-   *
-   * Two triggers, and they need different timing. The Style Studio writes the
-   * properties and then dispatches, so reading straight away is correct. A
-   * theme switch flips a class on <body> from an effect in the page component
-   * — a parent, so it runs *after* this one — and reading now would return the
-   * outgoing theme. The extra frame covers that case.
-   */
-  useEffect(() => {
-    const read = () => {
-      const cs = getComputedStyle(document.body);
-      const next = readMapPalette(name => cs.getPropertyValue(name));
-      setPalette(prev => (MAP_PALETTE_KEYS.every(k => prev[k] === next[k]) ? prev : next));
-    };
-    read();
-    const raf = requestAnimationFrame(read);
-    window.addEventListener(STYLE_EVENT, read);
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener(STYLE_EVENT, read);
-    };
-  }, [theme]);
 
     // Update aircraft icon colors dynamically on theme switch
     useEffect(() => {
@@ -2323,48 +2306,6 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
         detected_at: t.detected_at ?? 0,
       },
     })) : []);
-  }, [mapReady, data.malware_threats, activeLayers.malware, setGeo]);
-
-  /* Detections that landed while the operator was watching get a ring for a
-     minute. Without it a pushed feed is indistinguishable from a static one —
-     nodes simply appear, and the thing that makes it live goes unseen. */
-  useEffect(() => {
-    if (!mapReady || !mapRef.current || !activeLayers.malware) return;
-    const map = mapRef.current;
-
-    /* Arrivals are rare — a handful an hour — so the common case is that there
-       is nothing to draw. Tracking whether the last tick drew anything keeps
-       this from pushing an empty collection into the source five times a
-       second for the entire time the layer is on. */
-    let drawing = false;
-
-    const tick = () => {
-      const now = Date.now();
-      const beacons = arrivalBeacons(data.malware_threats ?? [], now);
-
-      if (beacons.length === 0) {
-        if (drawing) { setGeo('malware-new', []); drawing = false; }
-        return;
-      }
-
-      setGeo('malware-new', beacons.map(b => ({
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: [b.lng, b.lat] },
-        properties: { age: b.age },
-      })));
-      drawing = true;
-
-      try {
-        // One shared pulse, so the ring reads as a beacon rather than each
-        // node breathing on its own schedule.
-        map.setPaintProperty('malware-new-ring', 'circle-radius',
-          ['interpolate', ['linear'], ['get', 'age'], 0, 6 + Math.sin(now / 200) * 2, 1, 26]);
-      } catch { /* style not settled yet */ }
-    };
-
-    tick();
-    const timer = setInterval(tick, 200);
-    return () => { clearInterval(timer); setGeo('malware-new', []); };
   }, [mapReady, data.malware_threats, activeLayers.malware, setGeo]);
 
   // Network Mesh Generation (Nearest Neighbor Lattice)
@@ -3607,166 +3548,6 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
     });
   }, [mapReady, arcgisLayers]);
 
-  const drawCbRef = useRef({ onDrawComplete, onDrawProgress, onDrawCancel });
-  /** Set by the drawing effect so on-screen buttons can dispatch into it. */
-  const drawApplyRef = useRef<((a: DrawAction) => void) | null>(null);
-  drawCbRef.current = { onDrawComplete, onDrawProgress, onDrawCancel };
-
-  // ── DRAWING MODE ──
-  // A four-mode state machine over one set of map handlers.
-  //
-  // Every mode collects points; what differs is how many are needed and what
-  // geometry they produce. Rectangle and circle are two-click shapes, so the
-  // cursor stands in for their second point until it is committed — which is
-  // what makes the preview and the final shape come from the same code path
-  // instead of two that can disagree.
-  //
-  // Escape cancels, Backspace removes the last vertex, Enter or a double click
-  // finishes. Drawing without an undo is the difference between a tool and a
-  // demo: a misplaced vertex twenty clicks in should not cost the whole shape.
-  useEffect(() => {
-    if (!mapReady || !mapRef.current) return;
-    const map = mapRef.current;
-
-    const SRC = 'draw-temp-source';
-    const IDS = ['draw-fill-temp', 'draw-line-temp', 'draw-points-temp'];
-
-    const teardown = () => {
-      IDS.forEach(id => { if (map.getLayer(id)) map.removeLayer(id); });
-      if (map.getSource(SRC)) map.removeSource(SRC);
-      drawingCoordsRef.current = [];
-      map.getCanvas().style.cursor = '';
-      map.doubleClickZoom.enable();
-    };
-
-    if (!drawMode) {
-      teardown();
-      drawCbRef.current.onDrawProgress?.(null);
-      return;
-    }
-
-    map.doubleClickZoom.disable();
-    map.getCanvas().style.cursor = 'crosshair';
-    drawingCoordsRef.current = [];
-
-    if (!map.getSource(SRC)) {
-      map.addSource(SRC, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-      map.addLayer({
-        id: 'draw-fill-temp', type: 'fill', source: SRC,
-        filter: ['==', ['geometry-type'], 'Polygon'],
-        paint: { 'fill-color': '#00E5FF', 'fill-opacity': 0.12 },
-      });
-      map.addLayer({
-        id: 'draw-line-temp', type: 'line', source: SRC,
-        filter: ['match', ['geometry-type'], ['LineString', 'Polygon'], true, false],
-        paint: { 'line-color': '#00E5FF', 'line-width': 2, 'line-dasharray': [3, 2] },
-      });
-      map.addLayer({
-        id: 'draw-points-temp', type: 'circle', source: SRC,
-        filter: ['==', ['geometry-type'], 'MultiPoint'],
-        paint: { 'circle-color': '#00E5FF', 'circle-radius': 4, 'circle-stroke-width': 1.5, 'circle-stroke-color': '#04040A' },
-      });
-    }
-
-    // Declared before paint(), which closes over it. Leaving it below would
-    // work only while no call happens in between — a temporal-dead-zone crash
-    // waiting for someone to add one.
-    let state: DrawState = initialDrawState(drawMode);
-
-    /** Redraw the preview from committed points plus an optional cursor point. */
-    const paint = (cursor?: [number, number]) => {
-      const committed = state.points;
-      const pts = cursor ? [...committed, cursor] : committed;
-      const src = map.getSource(SRC) as maplibregl.GeoJSONSource;
-      if (!src) return;
-
-      drawCbRef.current.onDrawProgress?.(pts.length ? measure(drawMode, pts) : null);
-
-      if (pts.length === 0) {
-        src.setData({ type: 'FeatureCollection', features: [] });
-        return;
-      }
-
-      const features: any[] = [
-        { type: 'Feature', properties: {}, geometry: { type: 'MultiPoint', coordinates: committed } },
-      ];
-
-      const geom = buildGeometry(drawMode, pts);
-      if (drawMode === 'line') {
-        if (pts.length > 1) {
-          features.push({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: geom } });
-        }
-      } else if (geom.length >= 3) {
-        // Show the enclosed area as it will be, not just its outline.
-        features.push({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [closeRing(geom)] } });
-      } else if (geom.length === 2) {
-        features.push({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: geom } });
-      }
-
-      src.setData({ type: 'FeatureCollection', features });
-    };
-
-    // The interaction lives in drawReducer, which is unit tested. This is the
-    // adapter: map events in, reducer out, preview repainted.
-    const apply = (action: DrawAction) => {
-      const t = drawReducer(state, action);
-      state = t.state;
-      drawingCoordsRef.current = state.points;
-      if (t.result) drawCbRef.current.onDrawComplete?.(t.result);
-      if (t.cancelled) drawCbRef.current.onDrawCancel?.();
-      paint();
-    };
-
-    let dblGuard = false;
-
-    const onClick = (e: any) => {
-      if (dblGuard) return;
-      apply({ type: 'click', at: [e.lngLat.lng, e.lngLat.lat] });
-    };
-
-    const onMove = (e: any) => {
-      if (state.points.length === 0) return;
-      paint([e.lngLat.lng, e.lngLat.lat]);
-    };
-
-    const onDblClick = (e: any) => {
-      e.preventDefault();
-      dblGuard = true;
-      setTimeout(() => { dblGuard = false; }, 300);
-      apply({ type: 'dblclick' });
-    };
-
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === 'Escape') { ev.preventDefault(); apply({ type: 'cancel' }); }
-      else if (ev.key === 'Backspace' || ev.key === 'Delete') { ev.preventDefault(); apply({ type: 'undo' }); }
-      else if (ev.key === 'Enter') { ev.preventDefault(); apply({ type: 'finish' }); }
-    };
-    drawApplyRef.current = apply;
-
-    map.on('click', onClick);
-    map.on('mousemove', onMove);
-    map.on('dblclick', onDblClick);
-    window.addEventListener('keydown', onKey);
-
-    return () => {
-      map.off('click', onClick);
-      map.off('mousemove', onMove);
-      map.off('dblclick', onDblClick);
-      window.removeEventListener('keydown', onKey);
-      drawApplyRef.current = null;
-      teardown();
-    };
-  }, [mapReady, drawMode]);
-
-  // Buttons dispatch into the same reducer the map events use, so a shape
-  // finished by clicking "Finish" is identical to one finished by Enter.
-  const lastCmdSeq = useRef(-1);
-  useEffect(() => {
-    if (!drawCommand || drawCommand.seq === lastCmdSeq.current) return;
-    lastCmdSeq.current = drawCommand.seq;
-    drawApplyRef.current?.({ type: drawCommand.action } as DrawAction);
-  }, [drawCommand]);
-
   // ── MAP CENTER REPORTING ──
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
@@ -3794,22 +3575,6 @@ function GlobeMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCli
   return (
     <>
       <div ref={containerRef} className="absolute inset-0 w-full h-full" />
-      {mapReady && (
-        <LiveNewsPreviews
-          mapRef={mapRef}
-          active={!!activeLayers.live_news}
-          feeds={data.live_feeds}
-          onOpen={(feed: PreviewFeed) => onEntityClick?.({
-            type: 'live_news',
-            name: feed.name,
-            city: feed.city,
-            country: feed.country,
-            url: feed.url,
-            category: feed.category,
-            embed_allowed: true,
-          })}
-        />
-      )}
     </>
   );
 }

@@ -1,4 +1,29 @@
-import type { AoiReport } from './aoi';
+/**
+ * Structural view of an AOI report. `lib/aoi.ts` (the builder) was removed in
+ * the Definitive Plan Phase 0 cleanup; the watch itself only ever consumed this
+ * shape, so the structural contract lives here now.
+ */
+export interface AoiItem {
+  id: string;
+  label: string;
+  lat: number;
+  lng: number;
+}
+
+export interface AoiGroup {
+  key: string;
+  label: string;
+  color: string;
+  count: number;
+  items: AoiItem[];
+  memberIds: string[];
+}
+
+export interface AoiReport {
+  total: number;
+  groups: AoiGroup[];
+}
+
 
 /**
  * OSIRIS — AOI tripwires

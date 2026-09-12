@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { buildCss, buildVars, DEFAULTS, sanitize, type StyleSettings } from './style-tokens';
-import { MAP_DEFAULTS, MAP_PALETTE_KEYS, MAP_VARS } from './map-palette';
 
 const settings = (o: Partial<StyleSettings> = {}): StyleSettings => ({ ...DEFAULTS, ...o });
 
@@ -168,34 +167,6 @@ describe('buildVars', () => {
   });
 });
 
-describe('map palette', () => {
-  it('emits every map property so the map can read them back', () => {
-    const v = buildVars(settings());
-    for (const key of MAP_PALETTE_KEYS) {
-      expect(v[MAP_VARS[key]]).toBe(MAP_DEFAULTS[key]);
-    }
-  });
-
-  it('carries an edited layer colour through to its property', () => {
-    const v = buildVars(settings({ map: { ...MAP_DEFAULTS, cctv: '#ff00ff' } }));
-    expect(v['--map-cctv']).toBe('#ff00ff');
-    expect(v['--map-sat-military']).toBe(MAP_DEFAULTS.satMilitary);
-  });
-
-  it('sanitises map colours like every other colour', () => {
-    // These land on body.style as text, so the same injection rules apply.
-    const hostile = { map: { cctv: 'red; } body { display: none } .x {', satEarth: '#0f0' } };
-    const out = sanitize(hostile, DEFAULTS);
-    expect(out.map.cctv).toBe(MAP_DEFAULTS.cctv);
-    expect(out.map.satEarth).toBe('#00ff00');
-    expect(JSON.stringify(out)).not.toContain('display');
-  });
-
-  it('survives a stored theme written before the map section existed', () => {
-    const out = sanitize({ accent: '#ffffff' }, DEFAULTS);
-    expect(out.map).toEqual(MAP_DEFAULTS);
-  });
-});
 
 describe('screen overlays', () => {
   it('emits nothing while scanlines, vignette and grain are all off', () => {
